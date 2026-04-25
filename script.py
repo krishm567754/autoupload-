@@ -9,7 +9,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def castrol_automation():
-    # 1. Setup Chrome Options
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
@@ -18,7 +17,8 @@ def castrol_automation():
     
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    wait = WebDriverWait(driver, 25)
+    # Increased wait to 30 seconds for reliability
+    wait = WebDriverWait(driver, 30)
 
     try:
         print("🚀 Opening Castrol Portal...")
@@ -29,35 +29,48 @@ def castrol_automation():
 
         # --- LOGIN BLOCK ---
         print(f"🔑 Entering credentials for: {USERNAME}")
-        # Ensure these lines are aligned exactly with 8 spaces (2 indents)
-        wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
-        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-        driver.find_element(By.ID, "btn-login").click()
+        
+        # Wait for UserId field
+        user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
+        user_field.clear()
+        user_field.send_keys(USERNAME)
+        
+        # Find Password field
+        pass_field = driver.find_element(By.NAME, "Password")
+        pass_field.clear()
+        pass_field.send_keys(PASSWORD)
+        
+        # FIXED: Find button by Type and Class instead of ID
+        print("🖱️ Clicking Login Button...")
+        login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+        login_btn.click()
 
         # --- SESSION CONFLICT BLOCK ---
         time.sleep(5) 
         if "already logged in" in driver.page_source.lower():
             print("⚠️ Session conflict detected! Clicking Logout...")
             try:
-                logout_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Logout')]")
+                # Looking for button containing 'Logout' text
+                logout_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Logout')]")))
                 logout_btn.click()
-                time.sleep(2)
+                time.sleep(3)
+                
                 # Re-login after force logout
-                driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
+                wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
                 driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-                driver.find_element(By.ID, "btn-login").click()
+                driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
             except Exception as e:
                 print(f"Bypass failed or not needed: {e}")
 
         # --- VERIFICATION & NAVIGATION ---
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "main-header")))
+        # Wait for the sidebar or header that confirms we are inside
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "skin-blue")))
         print("🎊 Login Successful! Navigating to Report...")
         
-        # Move to the specific sales report URL
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
         
-        # Wait for the 'Load Data' button to appear
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".btn.btn-primary")))
+        # Wait for the report page to load a primary button
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".btn-primary")))
         print("✅ Report page loaded successfully.")
 
     except Exception as e:

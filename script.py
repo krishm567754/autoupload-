@@ -27,12 +27,21 @@ options.add_experimental_option("prefs", prefs)
 service = Service("/usr/bin/chromedriver")
 driver = webdriver.Chrome(service=service, options=options)
 
+# 🔥 IMPORTANT: ENABLE DOWNLOAD IN HEADLESS
+driver.execute_cdp_cmd(
+    "Page.setDownloadBehavior",
+    {
+        "behavior": "allow",
+        "downloadPath": DOWNLOAD_DIR
+    }
+)
+
 try:
     print("Opening site...")
     driver.get("https://cildist.castroldms.com")
     time.sleep(3)
 
-    # ===== LOGIN (STABLE) =====
+    # ===== LOGIN =====
     print("Logging in...")
 
     user = driver.find_element(By.NAME, "UserId")
@@ -44,14 +53,11 @@ try:
     pwd.clear()
     pwd.send_keys(PASSWORD)
 
-    # submit form
     pwd.submit()
-
     time.sleep(8)
 
     print("URL after login:", driver.current_url)
 
-    # STRICT CHECK
     if "forget-password" in driver.current_url.lower() or "login" in driver.current_url.lower():
         driver.save_screenshot("login_failed.png")
         raise Exception("❌ Login failed")
@@ -70,26 +76,19 @@ try:
 
     # ===== CLICK LOAD DATA =====
     print("Clicking Load Data...")
-    clicked = False
     for btn in buttons:
-        cls = btn.get_attribute("class")
-        if "btn-primary" in cls:
+        if "btn-primary" in btn.get_attribute("class"):
             driver.execute_script("arguments[0].click();", btn)
-            clicked = True
             break
-
-    if not clicked:
-        raise Exception("Load Data button not found")
 
     time.sleep(6)
 
     # ===== CLICK EXCEL =====
     print("Clicking Excel...")
-
     buttons = driver.find_elements(By.CLASS_NAME, "btn")
     print("Buttons after load:", len(buttons))
 
-    # try last button (usually Excel)
+    # usually Excel is last button
     driver.execute_script("arguments[0].click();", buttons[-1])
 
     time.sleep(12)

@@ -1,6 +1,8 @@
 import os
 import time
+import datetime
 import ftplib
+import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -10,12 +12,46 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
+def filter_current_month(file_path):
+    print("🧹 Opening Excel file to filter for Current Month only...")
+    try:
+        df = pd.read_excel(file_path)
+        
+        # Locate the date column dynamically
+        date_col = next((col for col in df.columns if 'date' in str(col).lower()), None)
+        
+        if not date_col:
+            print("⚠️ Could not detect a 'Date' column. Uploading full file as safety fallback.")
+            return
+
+        original_row_count = len(df)
+        
+        # Convert to datetime using standard American parsing (MM/DD/YYYY)
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        
+        # Identify current month and year
+        now = datetime.datetime.now()
+        current_month = now.month
+        current_year = now.year
+        
+        # Keep only rows where the date matches current month AND year
+        filtered_df = df[(df[date_col].dt.month == current_month) & (df[date_col].dt.year == current_year)]
+        
+        # Save back to the exact same file
+        filtered_df.to_excel(file_path, index=False)
+        
+        new_row_count = len(filtered_df)
+        print(f"✂️ Filter successful! Removed {original_row_count - new_row_count} old rows. Keeping {new_row_count} current month rows.")
+
+    except Exception as e:
+        print(f"⚠️ Excel filtering failed: {e}. Proceeding with original unfiltered file.")
+
 def upload_to_ftp(local_file_path):
     FTP_HOST = "ftpupload.net"
     FTP_USER = "if0_40253796"
     FTP_PASS = "TL1pBn84f4JIXtI"
     REMOTE_FOLDER = "htdocs/sales_data"
-    TARGET_FILENAME = "invoice.xlsx" # STRICTLY SET TO invoice.xlsx
+    TARGET_FILENAME = "invoice.xlsx"
 
     print(f"☁️ Connecting to FTP: {FTP_HOST}...")
     try:
@@ -25,7 +61,6 @@ def upload_to_ftp(local_file_path):
             ftp.cwd(REMOTE_FOLDER)
             
             if TARGET_FILENAME in ftp.nlst():
-                print(f"🗑️ Deleting old {TARGET_FILENAME}...")
                 ftp.delete(TARGET_FILENAME)
                 
             print(f"📤 Uploading fresh {TARGET_FILENAME}...")
@@ -103,7 +138,6 @@ def castrol_automation():
                 driver.get("https://cildist.castroldms.com")
                 time.sleep(5)
                 
-                # Check if it threw us back to the login screen
                 user_fields = driver.find_elements(By.NAME, "UserId")
                 if user_fields:
                     print("🔑 Re-entering credentials...")
@@ -138,42 +172,47 @@ def castrol_automation():
         if not download_success:
             raise Exception("❌ Download failed: No XLSX file arrived.")
 
-        # --- PHASE 5: FILE PROCESS & UPLOAD ---
+        # --- PHASE 5: FILE PROCESS, FILTER, & UPLOAD ---
         xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
         latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
-        
-        # STRICTLY naming it invoice.xlsx
         final_local_path = os.path.join(download_dir, "invoice.xlsx")
         
         if os.path.exists(final_local_path): os.remove(final_local_path)
         os.rename(latest_file, final_local_path)
-        print(f"✅ Local file ready: {final_local_path}")
+        
+        # Run Pandas to strip out old months!
+        filter_current_month(final_local_path)
         
         upload_to_ftp(final_local_path)
 
-        # --- PHASE 6: WEBSITE REFRESH ---
-        print(f"🌐 Visiting Dashboard to Trigger Refresh: https://krishmo.xo.je/?i=1")
+        # --- PHASE 6: DASHBOARD REFRESH WITH LIVE STATUS TRACKER ---
+        print(f"🌐 Visiting Dashboard to Trigger Refresh...")
         driver.get(f"https://krishmo.xo.je/?i=1&t={int(time.time())}")
-        time.sleep(10)
+        time.sleep(8)
         
         try:
-            # Click the exact footer refresh button from your HTML code
             refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
             driver.execute_script("arguments[0].click();", refresh_btn)
-            print("🔄 Dashboard Refresh Clicked! Waiting for JS processing...")
+            print("🔄 Dashboard Refresh Clicked! Monitoring JS Engine...")
             
-            # Wait up to 60 seconds for your dashboard's JS to say "Done"
-            try:
-                WebDriverWait(driver, 60).until(
-                    EC.text_to_be_present_in_element((By.ID, "loader-text"), "Done")
-                )
-                print("✅ Cache rebuilt and saved successfully by your Dashboard!")
-            except:
-                print("⚠️ Timed out waiting for 'Done' message, but gave it 60s to process in background.")
-                time.sleep(10)
-                
+            last_status = ""
+            for check in range(30): 
+                time.sleep(2)
+                try:
+                    current_status = driver.execute_script("return document.getElementById('loader-text').innerText;")
+                    
+                    if current_status and current_status != last_status:
+                        print(f"📡 Dashboard Status: {current_status}")
+                        last_status = current_status
+                        
+                    if "Done" in str(current_status):
+                        print("✅ Cache rebuilt and saved successfully by your Dashboard!")
+                        break
+                except:
+                    pass 
+
         except Exception as refresh_err:
-            print(f"⚠️ Dashboard refresh button not found or failed: {refresh_err}")
+            print(f"⚠️ Dashboard refresh button not found: {refresh_err}")
 
         print("🏁 MISSION COMPLETE! Fully updated and cached.")
 

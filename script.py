@@ -1,6 +1,5 @@
 import os
 import time
-import datetime
 import ftplib
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -16,21 +15,24 @@ def upload_to_ftp(local_file_path):
     FTP_USER = "if0_40253796"
     FTP_PASS = "TL1pBn84f4JIXtI"
     REMOTE_FOLDER = "htdocs/sales_data"
-    TARGET_FILENAME = "invoice.xlsx"
+    
+    # 🎯 Changed to match your Dashboard's JS fetch logic!
+    TARGET_FILENAME = "sales_data.xlsx" 
 
     print(f"☁️ Connecting to FTP: {FTP_HOST}...")
     try:
         with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
             ftp.encoding = "utf-8"
+            print(f"📂 Navigating to {REMOTE_FOLDER}...")
             ftp.cwd(REMOTE_FOLDER)
-            
-            # Delete old file
+
+            # Delete the previous file if it exists
             files_in_folder = ftp.nlst()
             if TARGET_FILENAME in files_in_folder:
                 print(f"🗑️ Deleting existing {TARGET_FILENAME}...")
                 ftp.delete(TARGET_FILENAME)
 
-            # Upload new file
+            # Upload the new file
             print(f"📤 Uploading fresh {TARGET_FILENAME}...")
             with open(local_file_path, "rb") as file:
                 ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
@@ -41,7 +43,12 @@ def upload_to_ftp(local_file_path):
 
 def castrol_automation():
     download_dir = os.path.join(os.getcwd(), "downloads")
-    if not os.path.exists(download_dir): os.makedirs(download_dir)
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+    # Clean up any old files from previous failed runs before starting
+    for f in os.listdir(download_dir):
+        os.remove(os.path.join(download_dir, f))
 
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
@@ -52,13 +59,12 @@ def castrol_automation():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # Enable headless downloads
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": download_dir
     })
 
-    wait = WebDriverWait(driver, 40)
+    wait = WebDriverWait(driver, 35)
 
     try:
         # --- PHASE 1: LOGIN ---
@@ -67,25 +73,31 @@ def castrol_automation():
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+        user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
+        user_field.send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-        driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+        login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+        driver.execute_script("arguments[0].click();", login_btn)
 
         # --- PHASE 2: SESSION CONFLICT ---
-        time.sleep(8)
+        time.sleep(7)
         if "already logged in" in driver.page_source.lower():
-            print("⚠️ Session conflict! Forcing logout...")
-            logout_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
-            if logout_btns:
-                driver.execute_script("arguments[0].click();", logout_btns[0])
-                time.sleep(8)
-                wait.until(EC.element_to_be_clickable((By.NAME, "UserId"))).send_keys(USERNAME)
-                driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-                driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+            print("⚠️ Session conflict detected! Forcing logout...")
+            try:
+                found_logout_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
+                if found_logout_buttons:
+                    driver.execute_script("arguments[0].click();", found_logout_buttons[0])
+                    print("🖱️ Logout button clicked...")
+                    time.sleep(5)
+                    wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+                    driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+                    driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+            except Exception as e:
+                print(f"⚠️ Conflict bypass attempt failed: {e}")
 
         # --- PHASE 3: NAVIGATION ---
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "skin-blue")))
-        print("📂 Navigating to Export page...")
+        print("📂 Navigating directly to Invoice Export page...")
+        time.sleep(3)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
         # --- PHASE 4: DOWNLOAD ---
@@ -93,47 +105,41 @@ def castrol_automation():
         excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        print("⏳ Waiting for generation (60s)...")
-        found = False
-        for i in range(8):
-            time.sleep(10)
-            if any(f.endswith('.xlsx') for f in os.listdir(download_dir)):
-                found = True
-                break
+        # 🎯 Dynamic Wait logic (Checks every 1 second up to 120 seconds)
+        print("⏳ Waiting for file download to complete...")
+        download_timeout = 120
+        file_ready = False
         
-        if not found: raise Exception("❌ Download failed: No XLSX file.")
+        for _ in range(download_timeout):
+            all_files = os.listdir(download_dir)
+            xlsx_files = [f for f in all_files if f.endswith('.xlsx')]
+            temp_files = [f for f in all_files if f.endswith('.crdownload') or f.endswith('.tmp')]
+            
+            # If we have an xlsx file and no active Chrome temp downloads, it's done!
+            if xlsx_files and not temp_files:
+                file_ready = True
+                break
+            time.sleep(1)
+
+        if not file_ready:
+            raise Exception("❌ Download timed out. The file took too long or failed to generate.")
 
         # --- PHASE 5: FILE PROCESS & UPLOAD ---
-        xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
-        latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
-        final_local_path = os.path.join(download_dir, "invoice.xlsx")
+        files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
+        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
+        final_local_path = os.path.join(download_dir, "sales_data.xlsx")
         
-        if os.path.exists(final_local_path): os.remove(final_local_path)
+        if os.path.exists(final_local_path):
+            os.remove(final_local_path)
+            
         os.rename(latest_file, final_local_path)
+        print(f"✅ File {final_local_path} ready for upload.")
         
         upload_to_ftp(final_local_path)
 
-        # --- PHASE 6: WEBSITE REFRESH (SIMPLE) ---
-        print("🌐 Visiting Dashboard...")
-        # Visiting with a timestamp to bust InfinityFree cache
-        driver.get(f"https://krishmo.xo.je/?i=1&t={int(time.time())}")
-        time.sleep(10) # Wait for page load
-        
-        print("🔄 Clicking Footer Refresh Button...")
-        try:
-            # ID from your code: id="refresh-button"
-            footer_refresh = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
-            driver.execute_script("arguments[0].click();", footer_refresh)
-            print("✨ Dashboard Refresh Triggered!")
-            time.sleep(5)
-        except Exception as refresh_err:
-            print(f"⚠️ Refresh button click failed: {refresh_err}")
-
-        print("🏁 ALL TASKS COMPLETED!")
-
     except Exception as e:
         print(f"❌ Error: {e}")
-        driver.save_screenshot("final_error.png")
+        driver.save_screenshot("final_error_debug.png")
         raise e 
     finally:
         driver.quit()

@@ -1,25 +1,35 @@
-name: Test Download
+name: Castrol Auto Login
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to run it manually for testing
 
 jobs:
-  run:
+  run-script:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      - name: Install Chrome
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Chrome and Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y chromium-browser chromium-chromedriver
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          pip install selenium
 
-      - name: Install Python packages
-        run: pip install selenium
-
-      - name: Run script
+      - name: Run Script
         env:
           SITE_USERNAME: ${{ secrets.SITE_USERNAME }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
         run: python script.py
+
+      - name: Upload Error Screenshot
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: error-log
+          path: login_error.png

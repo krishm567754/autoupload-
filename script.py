@@ -9,32 +9,63 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def castrol_login():
-    # 1. Setup Chrome Options for GitHub Actions (Headless)
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # 2. Initialize Driver
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    # This automatically downloads the correct driver for the runner's Chrome version
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
     wait = WebDriverWait(driver, 20)
 
     try:
         print("🚀 Navigating to Castrol Portal...")
         driver.get("https://cildist.castroldms.com")
 
-        # 3. Enter Credentials from Environment Variables
-        # These will be set in GitHub Secrets later
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
         if not USERNAME or not PASSWORD:
-            print("❌ Error: Credentials not found in environment variables.")
+            print("❌ Error: Credentials missing in GitHub Secrets.")
             return None
 
-        print(f"🔑 Attempting login for user: {USERNAME}")
-        
+        print(f"🔑 Attempting login for: {USERNAME}")
+        wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+        driver.find_element(By.ID, "btn-login").click()
+
+        # Handle Session Conflict
+        time.sleep(5) 
+        if "already logged in" in driver.page_source.lower():
+            print("⚠️ Session conflict! Forcing logout...")
+            try:
+                logout_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Logout')]")
+                logout_btn.click()
+                time.sleep(2)
+                # Re-login
+                driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
+                driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+                driver.find_element(By.ID, "btn-login").click()
+            except Exception as e:
+                print(f"Could not bypass popup: {e}")
+
+        # Verification
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "main-header")))
+        print("🎊 Success! Dashboard reached.")
+        return driver
+
+    except Exception as e:
+        print(f"❌ Failed: {e}")
+        driver.save_screenshot("login_error.png")
+        raise e # Tells GitHub Actions the job failed
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    castrol_login()        
         # Using the specific field names you provided: UserId and Password
         wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)

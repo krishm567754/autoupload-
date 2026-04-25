@@ -10,6 +10,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def castrol_automation():
+    # 1. Setup Download Directory
     download_dir = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
@@ -32,71 +33,78 @@ def castrol_automation():
     wait = WebDriverWait(driver, 30)
 
     try:
+        # --- PHASE 1: LOGIN (The logic that worked) ---
         print("🚀 Opening Castrol Portal...")
         driver.get("https://cildist.castroldms.com")
 
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        # --- LOGIN ---
         print(f"🔑 Logging in as: {USERNAME}")
-        wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+        user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
+        user_field.send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
         
-        # Click login button (the green one from your video)
+        # Click the login button using the submit type (as seen in screenshot)
         login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
         login_btn.click()
 
-        # Wait for dashboard to load
+        # --- PHASE 2: SESSION CONFLICT ---
         time.sleep(5)
-        
-        # --- NAVIGATION ---
-        print("📂 Navigating to Sales Report URL...")
+        if "already logged in" in driver.page_source.lower():
+            print("⚠️ Session conflict! Forcing logout...")
+            try:
+                logout_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Logout')]")
+                logout_btn.click()
+                time.sleep(3)
+                # Re-login
+                wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+                driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+                driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+            except:
+                print("Proceeding past conflict check...")
+
+        # --- PHASE 3: NAVIGATION & DOWNLOAD (Matches your video) ---
+        print("📂 Navigating directly to Invoice Export page...")
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
-        # --- DOWNLOAD LOGIC (Updated via Video) ---
         print("💾 Clicking 'Save as Excel'...")
-        # In your video, the button has the class 'btn-success' and is green
+        # Finding the green button from your video
         excel_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-success")))
         excel_btn.click()
         
-        # In your video, it says 'Loading...' after clicking. 
-        # We wait for the loading spinner to disappear and the file to start downloading.
-        print("⏳ Processing report... (Waiting 20s for download to start)")
-        time.sleep(20) 
+        # Wait for the "Loading..." spinner to finish (seen in video)
+        print("⏳ Waiting for report generation and download (30s)...")
+        time.sleep(30) 
 
-        # --- FILE HANDLING ---
-        print("📥 Checking downloads folder...")
+        # --- PHASE 4: FILE VERIFICATION ---
         files = os.listdir(download_dir)
-        
-        # Retry loop to wait for file to appear
-        for i in range(10):
-            if any(f.endswith('.xlsx') for f in os.listdir(download_dir)):
-                break
-            time.sleep(2)
+        if not files:
+            # If no file, check if it's still 'crdownload' (Chrome's temp format)
+            time.sleep(10)
             files = os.listdir(download_dir)
 
-        if not files:
-            # Take a screenshot if it fails here so we can see the 'Loading' state
-            driver.save_screenshot("download_fail_screen.png")
-            raise Exception("❌ File never arrived in downloads folder.")
+        if files:
+            # Get the actual .xlsx file (ignore temp files)
+            xlsx_files = [f for f in files if f.endswith('.xlsx')]
+            if xlsx_files:
+                latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
+                date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                new_filename = f"sales_{date_str}.xlsx"
+                new_path = os.path.join(download_dir, new_filename)
+                
+                os.rename(latest_file, new_path)
+                print(f"✅ SUCCESS: File saved as {new_filename}")
+                return new_path
         
-        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
-        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        new_filename = f"sales_{date_str}.xlsx"
-        new_path = os.path.join(download_dir, new_filename)
-        
-        os.rename(latest_file, new_path)
-        print(f"✅ SUCCESS: Saved as {new_filename}")
-        
-        return new_path
+        raise Exception("❌ File was not found in the downloads folder.")
 
     except Exception as e:
         print(f"❌ Automation Error: {e}")
-        driver.save_screenshot("last_error.png")
+        driver.save_screenshot("final_error_debug.png")
         raise e 
     finally:
         driver.quit()
 
 if __name__ == "__main__":
-    report_file = castrol_automation()
+    castrol_automation()

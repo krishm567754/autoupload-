@@ -36,15 +36,15 @@ def castrol_automation():
     download_dir = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(download_dir): os.makedirs(download_dir)
 
-    # --- EXPERT FIX: ANTI-BOT & HEADLESS EVASION ---
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled") # Hides automation flag
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled") 
+    
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}") # Pretend to be a normal Windows desktop
+    chrome_options.add_argument(f"user-agent={user_agent}") 
     
     prefs = {"download.default_directory": download_dir, "download.prompt_for_download": False}
     chrome_options.add_experimental_option("prefs", prefs)
@@ -55,18 +55,17 @@ def castrol_automation():
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": download_dir})
     
-    # We lowered the wait here because we are using a retry loop instead
     wait = WebDriverWait(driver, 25)
 
     try:
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        # --- PHASE 1: LOGIN WITH RETRY LOOP ---
+        # --- PHASE 1: INITIAL LOGIN ---
         print("🚀 Opening Castrol Portal...")
         login_success = False
         
-        for attempt in range(3): # Try 3 times if the page doesn't load
+        for attempt in range(3):
             try:
                 driver.get("https://cildist.castroldms.com")
                 user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
@@ -79,30 +78,44 @@ def castrol_automation():
                 
                 driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
                 login_success = True
-                break # Exit loop if successful
+                break 
             except TimeoutException:
-                print(f"⚠️ Attempt {attempt + 1} failed. Portal didn't load properly. Retrying...")
+                print(f"⚠️ Portal load attempt {attempt + 1} failed. Retrying...")
                 time.sleep(5)
                 
         if not login_success:
             raise Exception("❌ Failed to load the login page after 3 attempts.")
 
-        # --- PHASE 2: SESSION CONFLICT RECOVERY ---
+        # --- PHASE 2: SMART SESSION RECOVERY ---
         time.sleep(10)
         if "already logged in" in driver.page_source.lower():
             print("⚠️ Session conflict detected! Forcing logout...")
             logout_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
             if logout_btns:
                 driver.execute_script("arguments[0].click();", logout_btns[0])
-                time.sleep(8)
-                wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
-                driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-                driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
                 time.sleep(5)
+                
+                print("🔄 Reloading portal to verify state...")
+                driver.get("https://cildist.castroldms.com")
+                time.sleep(5)
+                
+                # Check if it threw us back to the login screen using find_elements (which doesn't crash if missing)
+                user_fields = driver.find_elements(By.NAME, "UserId")
+                if user_fields:
+                    print("🔑 Portal returned to login screen. Re-entering credentials...")
+                    user_fields[0].clear()
+                    user_fields[0].send_keys(USERNAME)
+                    driver.find_element(By.NAME, "Password").clear()
+                    driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+                    driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+                    time.sleep(8)
+                else:
+                    print("✅ Session successfully taken over. Forwarded to dashboard.")
 
         # --- PHASE 3: NAVIGATION ---
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "skin-blue")))
         print("📂 Navigating to Export page...")
+        # Give it a moment to ensure any dashboard scripts finish loading
+        time.sleep(4)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
         # --- PHASE 4: DOWNLOAD ---

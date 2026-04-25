@@ -10,7 +10,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def castrol_automation():
-    # 1. Setup Download Directory
     download_dir = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
@@ -24,7 +23,7 @@ def castrol_automation():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # CRITICAL: Fix for headless downloads
+    # Enable headless downloads
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": download_dir
@@ -33,68 +32,71 @@ def castrol_automation():
     wait = WebDriverWait(driver, 30)
 
     try:
-        # --- LOGIN & NAVIGATION (Already Working) ---
         print("🚀 Opening Castrol Portal...")
         driver.get("https://cildist.castroldms.com")
-        
+
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
+        # --- LOGIN ---
+        print(f"🔑 Logging in as: {USERNAME}")
         wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-        driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+        
+        # Click login button (the green one from your video)
+        login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+        login_btn.click()
 
+        # Wait for dashboard to load
         time.sleep(5)
-        # (Add your session conflict check here if needed)
-
-        print("📂 Navigating to Sales Report...")
+        
+        # --- NAVIGATION ---
+        print("📂 Navigating to Sales Report URL...")
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
-        # --- STEP 1: LOAD DATA ---
-        print("📊 Clicking 'Load Data'...")
-        # Usually, this is a primary button on the report page
-        load_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn.btn-primary")))
-        load_btn.click()
-        
-        # We must wait for the data to actually load into the grid
-        print("⏳ Waiting for data to populate (15s)...")
-        time.sleep(15) 
-
-        # --- STEP 2: DOWNLOAD EXCEL ---
-        print("💾 Exporting to Excel...")
-        # Finding the Excel button - trying XPATH first as it's often an icon or text link
-        excel_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Excel')] | //a[contains(@class, 'export')] | //button[contains(@class, 'btn-success')]")))
+        # --- DOWNLOAD LOGIC (Updated via Video) ---
+        print("💾 Clicking 'Save as Excel'...")
+        # In your video, the button has the class 'btn-success' and is green
+        excel_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-success")))
         excel_btn.click()
         
-        # Give the file time to download
-        print("📥 Downloading file...")
-        time.sleep(10)
+        # In your video, it says 'Loading...' after clicking. 
+        # We wait for the loading spinner to disappear and the file to start downloading.
+        print("⏳ Processing report... (Waiting 20s for download to start)")
+        time.sleep(20) 
 
-        # --- STEP 3: DETECT & RENAME ---
+        # --- FILE HANDLING ---
+        print("📥 Checking downloads folder...")
         files = os.listdir(download_dir)
-        if not files:
-            raise Exception("❌ Download failed: No file found in download folder.")
         
-        # Get the most recent file
+        # Retry loop to wait for file to appear
+        for i in range(10):
+            if any(f.endswith('.xlsx') for f in os.listdir(download_dir)):
+                break
+            time.sleep(2)
+            files = os.listdir(download_dir)
+
+        if not files:
+            # Take a screenshot if it fails here so we can see the 'Loading' state
+            driver.save_screenshot("download_fail_screen.png")
+            raise Exception("❌ File never arrived in downloads folder.")
+        
         latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
         date_str = datetime.datetime.now().strftime("%Y-%m-%d")
         new_filename = f"sales_{date_str}.xlsx"
         new_path = os.path.join(download_dir, new_filename)
         
         os.rename(latest_file, new_path)
-        print(f"✅ Report saved and renamed: {new_filename}")
+        print(f"✅ SUCCESS: Saved as {new_filename}")
         
-        # Return the path so we can use it for FTP upload next
         return new_path
 
     except Exception as e:
         print(f"❌ Automation Error: {e}")
-        driver.save_screenshot("report_error.png")
+        driver.save_screenshot("last_error.png")
         raise e 
     finally:
         driver.quit()
 
 if __name__ == "__main__":
     report_file = castrol_automation()
-    if report_file:
-        print(f"Ready to upload {report_file} to FTP.")

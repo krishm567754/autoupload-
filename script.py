@@ -3,6 +3,7 @@ import time
 import datetime
 import ftplib
 import pandas as pd
+import warnings
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -15,10 +16,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 def filter_current_month(file_path):
     print("🧹 Opening Excel file to filter for Current Month only...")
     try:
-        import warnings
         df = pd.read_excel(file_path)
         
-        # Target exact column name from your provided sample
+        # Target the exact column
         date_col = "Invoice Date"
         if date_col not in df.columns:
             possible_cols = [col for col in df.columns if 'invoice date' in str(col).lower()]
@@ -29,23 +29,22 @@ def filter_current_month(file_path):
                 return
 
         original_row_count = len(df)
-        print(f"📅 Using column: '{date_col}' for filtering...")
+        print(f"📅 Using column: '{date_col}'. Parsing using American/ISO format...")
         
-        # Suppress warnings and parse using the exact YYYY-MM-DD format seen in your sample
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            # Pandas is very smart at reading YYYY-MM-DD format
-            df['parsed_date'] = pd.to_datetime(df[date_col], errors='coerce')
+            # Parses MM/DD/YYYY or YYYY-MM-DD as requested
+            df['parsed_date'] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=False)
         
         now = datetime.datetime.now()
         current_month = now.month
         current_year = now.year
         
-        # Keep only rows where the parsed date matches current month AND year
+        # Keep only current month and year
         filtered_df = df[(df['parsed_date'].dt.month == current_month) & (df['parsed_date'].dt.year == current_year)]
         filtered_df = filtered_df.drop(columns=['parsed_date'])
         
-        # Overwrite the file with just the current month's data
+        # Overwrite file
         filtered_df.to_excel(file_path, index=False)
         
         new_row_count = len(filtered_df)
@@ -62,7 +61,6 @@ def upload_to_ftp(local_file_path, ftp_host, ftp_user, ftp_pass, remote_folder, 
             print(f"📂 Navigating to {remote_folder}...")
             ftp.cwd(remote_folder)
             
-            # Delete old file ONLY if the filename already exists (Overwrites current month, leaves past months safe)
             if target_filename in ftp.nlst():
                 print(f"🗑️ Deleting existing {target_filename} to replace it...")
                 ftp.delete(target_filename)
@@ -138,7 +136,6 @@ def castrol_automation():
                 driver.execute_script("arguments[0].click();", logout_btns[0])
                 time.sleep(5)
                 
-                print("🔄 Reloading portal to verify state...")
                 driver.get("https://cildist.castroldms.com")
                 time.sleep(5)
                 
@@ -151,8 +148,6 @@ def castrol_automation():
                     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
                     driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
                     time.sleep(8)
-                else:
-                    print("✅ Session successfully taken over.")
 
         # --- PHASE 3: NAVIGATION ---
         print("📂 Navigating to Export page...")
@@ -189,7 +184,7 @@ def castrol_automation():
         
         # --- PHASE 6: DUAL FTP UPLOADS ---
         print("\n=== STARTING FTP UPLOADS ===")
-        # Server 1: Primary Website
+        # Server 1: Primary Website (Always overwrites invoice.xlsx)
         upload_to_ftp(
             local_file_path=local_path,
             ftp_host="ftpupload.net",
@@ -199,9 +194,9 @@ def castrol_automation():
             target_filename="invoice.xlsx"
         )
         
-        # Server 2: Archive Website
+        # Server 2: Archive Website (Saves as YYYY_MM.xlsx)
         now = datetime.datetime.now()
-        archive_filename = f"{now.year}_{now.month:02d}.xlsx" # Example: 2026_04.xlsx
+        archive_filename = f"{now.year}_{now.month:02d}.xlsx" 
         upload_to_ftp(
             local_file_path=local_path,
             ftp_host="ftpupload.net",
@@ -243,28 +238,50 @@ def castrol_automation():
         except Exception as e:
             print(f"⚠️ Website 1 refresh issue: {e}")
 
-        # --- PHASE 8: WEBSITE 2 REFRESH (NO POPUP) ---
+        # --- PHASE 8: WEBSITE 2 REFRESH (krishmodiexp.xo.je) ---
         print(f"\n🌐 Visiting Website 2 (krishmodiexp.xo.je)...")
         driver.get(f"https://krishmodiexp.xo.je/?i=1&t={int(time.time())}")
         time.sleep(8)
         
         try:
-            refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
-            driver.execute_script("arguments[0].click();", refresh_btn)
-            print("🔄 Website 2 Refresh Clicked! (No popup expected). Monitoring JS Engine...")
+            print("🔄 Looking for the green refresh button...")
+            # Use JS to find and click the floating button from the video
+            clicked = driver.execute_script("""
+                let btns = Array.from(document.querySelectorAll('button, a, div'));
+                let target = btns.reverse().find(b => 
+                    (b.className.includes('fixed') && b.className.includes('bottom')) || 
+                    (b.innerHTML.includes('<svg') && b.clientHeight > 30) ||
+                    (b.id === 'refresh-button')
+                );
+                if (target) { target.click(); return true; }
+                
+                // Fallback click on any SVG if no floating button is found
+                let svg = document.querySelector('svg');
+                if (svg && svg.parentElement) { svg.parentElement.click(); return true; }
+                
+                return false;
+            """)
             
-            last_status = ""
-            for check in range(30): 
+            if clicked:
+                print("✅ Clicked the refresh button! Monitoring 'Syncing...' text...")
+            else:
+                print("⚠️ Couldn't definitively click the button, monitoring anyway...")
+            
+            # Watch for "Syncing..." text to appear and disappear
+            sync_active = False
+            for check in range(45): # Wait up to 90 seconds
                 time.sleep(2)
                 try:
-                    current_status = driver.execute_script("return document.getElementById('loader-text').innerText;")
-                    if current_status and current_status != last_status:
-                        print(f"📡 Website 2 Status: {current_status}")
-                        last_status = current_status
-                    if "Done" in str(current_status):
-                        print("✅ Website 2 Cache rebuilt successfully!")
+                    page_text = driver.execute_script("return document.body.innerText;")
+                    if "Syncing..." in page_text:
+                        if not sync_active:
+                            print("📡 Website 2 Status: Syncing...")
+                        sync_active = True
+                    elif sync_active and "Syncing..." not in page_text:
+                        print("✅ Website 2 Syncing complete! Cache is fresh.")
                         break
                 except: pass
+                
         except Exception as e:
             print(f"⚠️ Website 2 refresh issue: {e}")
 

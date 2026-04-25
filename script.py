@@ -15,7 +15,6 @@ def upload_to_ftp(local_file_path):
     FTP_USER = "if0_40253796"
     FTP_PASS = "TL1pBn84f4JIXtI"
     REMOTE_FOLDER = "htdocs/sales_data"
-    
     TARGET_FILENAME = "sales_data.xlsx" 
 
     print(f"☁️ Connecting to FTP: {FTP_HOST}...")
@@ -51,6 +50,9 @@ def castrol_automation():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
+    
+    # Enable browser logging for debug
+    chrome_options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
     
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -131,31 +133,32 @@ def castrol_automation():
         
         upload_to_ftp(final_local_path)
 
-        # --- PHASE 6: DASHBOARD REFRESH (ROBUST FIX) ---
-        DASHBOARD_URL = "https://krishmo.xo.je/" 
+        # --- PHASE 6: DASHBOARD REFRESH (DEBUG ENABLED) ---
+        DASHBOARD_URL = "https://krishmodiexp.xo.je/" 
         print(f"🌐 Opening Dashboard to Trigger Refresh: {DASHBOARD_URL}")
         
         driver.get(DASHBOARD_URL)
         
-        # 1. Wait for InfinityFree Anti-Bot to clear and the page to fully render
-        print("⏳ Waiting for page to load and bypass anti-bot...")
-        wait.until(EC.presence_of_element_located((By.ID, "syncStatus")))
-        time.sleep(5) 
+        print("⏳ Waiting 10 seconds for page load and InfinityFree anti-bot bypass...")
+        time.sleep(10) 
         
-        initial_status = driver.find_element(By.ID, "syncStatus").text
-        print(f"📊 Initial Dashboard Status: {initial_status}")
-        
-        # 2. Click the Refresh Button
-        sync_btn = driver.find_element(By.CSS_SELECTOR, ".refresh-btn")
+        # Check initial status
+        try:
+            initial_status = driver.find_element(By.ID, "syncStatus").text
+            print(f"📊 Initial Dashboard Status: {initial_status}")
+        except:
+            print("⚠️ Could not find #syncStatus element. Anti-bot might still be active.")
+
+        # Find the sync button and click it
+        sync_btn = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".refresh-btn")))
         driver.execute_script("arguments[0].click();", sync_btn)
         print("🔄 Dashboard Refresh Clicked!")
-        print("⏳ Waiting for JS Engine to calculate and save cache (Max 150s)...")
+        print("⏳ Waiting for Dashboard JS Engine to calculate (Watching for ✅ or ❌)...")
 
-        # 3. Dynamic Waiting Function: Look for either Success OR Error emojis
+        # Custom Wait: Look for either Success OR Error
         def check_status_complete(d):
             try:
                 t = d.find_element(By.ID, "syncStatus").text
-                # If the JS script finishes, it drops a ✅ or ❌ in the top bar.
                 if "✅" in t or "❌" in t:
                     return t
                 return False
@@ -164,16 +167,18 @@ def castrol_automation():
                 
         final_result = WebDriverWait(driver, 150).until(check_status_complete)
         
-        # 4. Handle Final Output
         if "✅" in final_result:
             print(f"🏁 MISSION COMPLETE! Dashboard successfully synced: {final_result}")
         else:
-            # If the Javascript crashed during math/parsing, we print the JS error here!
-            print(f"⚠️ DASHBOARD ENCOUNTERED AN ERROR: {final_result}")
+            print(f"\n⚠️ DASHBOARD ENCOUNTERED AN ERROR: {final_result}")
+            print("\n--- BROWSER CONSOLE LOGS ---")
+            for entry in driver.get_log('browser'):
+                print(entry)
+            print("----------------------------\n")
             raise Exception(f"Dashboard sync failed with internal error: {final_result}")
 
     except Exception as e:
-        print(f"❌ Automation Failed: {e}")
+        print(f"❌ Error: {e}")
         try:
             driver.save_screenshot("final_error_debug.png")
             print("📸 Error screenshot saved as final_error_debug.png")

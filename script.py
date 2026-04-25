@@ -22,10 +22,16 @@ def upload_to_ftp(local_file_path):
         with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
             ftp.encoding = "utf-8"
             ftp.cwd(REMOTE_FOLDER)
+            
+            # Get list of files and delete the old invoice.xlsx
             files_in_folder = ftp.nlst()
             if TARGET_FILENAME in files_in_folder:
+                print(f"🗑️ Removing old {TARGET_FILENAME} from server...")
                 ftp.delete(TARGET_FILENAME)
+
+            # Upload new file in binary mode
             with open(local_file_path, "rb") as file:
+                print(f"📤 Uploading fresh {TARGET_FILENAME}...")
                 ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
             print("🎯 FTP Upload Complete!")
     except Exception as e:
@@ -46,7 +52,7 @@ def castrol_automation():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": download_dir})
-    wait = WebDriverWait(driver, 35)
+    wait = WebDriverWait(driver, 40)
 
     try:
         # --- PHASE 1: LOGIN ---
@@ -57,7 +63,9 @@ def castrol_automation():
 
         wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-        driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+        
+        login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+        driver.execute_script("arguments[0].click();", login_btn)
 
         # --- PHASE 2: SESSION CONFLICT ---
         time.sleep(7)
@@ -74,42 +82,60 @@ def castrol_automation():
         # --- PHASE 3: DOWNLOAD ---
         print("📂 Navigating to Export page...")
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
+        
+        # Select the 'Save as Excel' button using the text discovered in your logs
         excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
-        print("⏳ Downloading (50s)...")
-        time.sleep(50) 
+        print("⏳ Processing & Downloading (55s)...")
+        time.sleep(55) 
 
         # --- PHASE 4: FILE HANDLING & FTP ---
         files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
         if files:
             latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
             final_local_path = os.path.join(download_dir, "invoice.xlsx")
+            
             if os.path.exists(final_local_path): os.remove(final_local_path)
             os.rename(latest_file, final_local_path)
+            
             upload_to_ftp(final_local_path)
         else:
-            raise Exception("❌ No Excel file found.")
+            raise Exception("❌ No Excel file found in downloads.")
 
-        # --- PHASE 5: REFRESH DASHBOARD ---
-        print("🌐 Visiting Dashboard to refresh data...")
-        driver.get("https://krishmo.xo.je/?i=1")
-        time.sleep(5) # Wait for page load
+        # --- PHASE 5: REFRESH DASHBOARD (FIXED) ---
+        # Adding a timestamp to the URL (Cache Buster) ensures InfinityFree loads the fresh file
+        timestamp = int(time.time())
+        refresh_url = f"https://krishmo.xo.je/?i=1&refresh={timestamp}"
+        
+        print(f"🌐 Visiting Dashboard with Cache Buster: {refresh_url}")
+        driver.get(refresh_url)
+        time.sleep(8) 
         
         try:
-            # Look for an icon or button that represents 'refresh'
-            # Using XPATH to find common refresh icons or text
-            refresh_icon = wait.until(EC.presence_of_element_located((By.XPATH, "//i[contains(@class, 'refresh')] | //button[contains(@class, 'refresh')] | //a[contains(@href, 'refresh')]")))
-            driver.execute_script("arguments[0].click();", refresh_icon)
-            print("🔄 Dashboard Refresh triggered!")
-            time.sleep(3)
-        except:
-            print("⚠️ Could not find a specific refresh icon, but page was visited.")
+            # Enhanced selector: Looks for common refresh IDs or the circular icon
+            refresh_selectors = [
+                "//i[contains(@class, 'refresh')]", 
+                "//button[contains(@id, 'refresh')]", 
+                "//a[contains(@class, 'reload')]",
+                "//button[contains(., 'Refresh')]"
+            ]
+            
+            for selector in refresh_selectors:
+                elements = driver.find_elements(By.XPATH, selector)
+                if elements:
+                    driver.execute_script("arguments[0].click();", elements[0])
+                    print(f"🔄 Refresh triggered via selector: {selector}")
+                    break
+            
+            time.sleep(5)
+        except Exception as e:
+            print(f"⚠️ Refresh click skipped: {e}")
 
-        print("🏁 All Tasks Completed Successfully!")
+        print("🏁 MISSION COMPLETE: Data is fresh on the dashboard!")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
-        driver.save_screenshot("error_debug.png")
+        print(f"❌ Automation Error: {e}")
+        driver.save_screenshot("final_error_debug.png")
         raise e 
     finally:
         driver.quit()

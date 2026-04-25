@@ -16,13 +16,21 @@ def upload_to_ftp(local_file_path):
     FTP_PASS = "TL1pBn84f4JIXtI"
     REMOTE_FOLDER = "htdocs/sales_data"
     TARGET_FILENAME = "invoice.xlsx"
-    print(f"☁️ Connecting to FTP...")
+
+    print(f"☁️ Connecting to FTP: {FTP_HOST}...")
     try:
         with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
             ftp.encoding = "utf-8"
             ftp.cwd(REMOTE_FOLDER)
-            if TARGET_FILENAME in ftp.nlst():
+            
+            # Delete the previous file if it exists
+            files_in_folder = ftp.nlst()
+            if TARGET_FILENAME in files_in_folder:
+                print(f"🗑️ Deleting existing {TARGET_FILENAME}...")
                 ftp.delete(TARGET_FILENAME)
+
+            # Upload the new file
+            print(f"📤 Uploading fresh {TARGET_FILENAME}...")
             with open(local_file_path, "rb") as file:
                 ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
             print("🎯 FTP Upload Complete!")
@@ -32,7 +40,8 @@ def upload_to_ftp(local_file_path):
 
 def castrol_automation():
     download_dir = os.path.join(os.getcwd(), "downloads")
-    if not os.path.exists(download_dir): os.makedirs(download_dir)
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
 
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
@@ -40,14 +49,15 @@ def castrol_automation():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # Modern Chrome sometimes needs this for headless downloads
-    prefs = {"download.default_directory": download_dir, "download.prompt_for_download": False}
-    chrome_options.add_experimental_option("prefs", prefs)
-
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.execute_cdp_cmd("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": download_dir})
-    wait = WebDriverWait(driver, 40)
+
+    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+        "behavior": "allow",
+        "downloadPath": download_dir
+    })
+
+    wait = WebDriverWait(driver, 35)
 
     try:
         # --- PHASE 1: LOGIN ---
@@ -56,69 +66,83 @@ def castrol_automation():
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+        user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
+        user_field.send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-        driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+        login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+        driver.execute_script("arguments[0].click();", login_btn)
 
         # --- PHASE 2: SESSION CONFLICT ---
-        time.sleep(8)
+        time.sleep(7)
         if "already logged in" in driver.page_source.lower():
-            print("⚠️ Session conflict! Forcing logout...")
+            print("⚠️ Session conflict detected! Forcing logout...")
             try:
-                logout_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
-                if logout_btns:
-                    driver.execute_script("arguments[0].click();", logout_btns[0])
-                    time.sleep(8)
-                    wait.until(EC.element_to_be_clickable((By.NAME, "UserId"))).send_keys(USERNAME)
+                found_logout_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
+                if found_logout_buttons:
+                    driver.execute_script("arguments[0].click();", found_logout_buttons[0])
+                    time.sleep(6)
+                    wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
                     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
                     driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
-                    time.sleep(5)
-            except: print("Proceeding...")
+            except Exception as e:
+                print(f"⚠️ Conflict bypass attempt failed: {e}")
 
         # --- PHASE 3: NAVIGATION ---
-        # Crucial: Wait for the dashboard to exist before navigating away
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "skin-blue")))
         print("📂 Navigating to Export page...")
+        time.sleep(3)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
         # --- PHASE 4: DOWNLOAD ---
         print("💾 Clicking 'Save as Excel'...")
-        # Use the exact XPATH from your React log
         excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        print("⏳ Waiting for generation (80s)...")
-        # Loop to check for file existence every 10 seconds
+        print("⏳ Waiting for generation and download (60s)...")
+        # Existence loop for the file
         found = False
-        for i in range(8):
+        for i in range(6):
             time.sleep(10)
-            current_files = os.listdir(download_dir)
-            print(f"📁 Files in folder: {current_files}")
-            if any(f.endswith('.xlsx') for f in current_files):
+            if any(f.endswith('.xlsx') for f in os.listdir(download_dir)):
                 found = True
                 break
         
         if not found:
-            raise Exception("❌ Download failed: No XLSX file appeared.")
+             raise Exception("❌ No Excel file arrived in downloads.")
 
         # --- PHASE 5: FILE PROCESS & UPLOAD ---
-        xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
-        latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
+        files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
+        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
         final_local_path = os.path.join(download_dir, "invoice.xlsx")
         
-        if os.path.exists(final_local_path): os.remove(final_local_path)
+        if os.path.exists(final_local_path):
+            os.remove(final_local_path)
+            
         os.rename(latest_file, final_local_path)
         upload_to_ftp(final_local_path)
 
-        # --- PHASE 6: DASHBOARD REFRESH ---
-        print(f"🌐 Refreshing Dashboard: https://krishmo.xo.je/?i=1")
-        driver.get(f"https://krishmo.xo.je/?i=1&refresh={int(time.time())}")
-        time.sleep(10)
+        # --- PHASE 6: REFRESH DASHBOARD ---
+        # Add timestamp to URL to bypass InfinityFree caching
+        timestamp = int(time.time())
+        dashboard_url = f"https://krishmo.xo.je/?i=1&t={timestamp}"
+        
+        print(f"🌐 Visiting Dashboard: {dashboard_url}")
+        driver.get(dashboard_url)
+        time.sleep(8)
+        
+        try:
+            # Try to find and click the refresh icon
+            refresh_icon = wait.until(EC.presence_of_element_located((By.XPATH, "//i[contains(@class, 'refresh')] | //button[contains(@id, 'refresh')] | //button[contains(., 'Refresh')]")))
+            driver.execute_script("arguments[0].click();", refresh_icon)
+            print("🔄 Dashboard Refresh Clicked!")
+            time.sleep(5)
+        except:
+            print("⚠️ Refresh icon not found, but dashboard was visited.")
+
         print("🏁 MISSION COMPLETE!")
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        driver.save_screenshot("error_state.png")
+        driver.save_screenshot("final_error_debug.png")
         raise e 
     finally:
         driver.quit()

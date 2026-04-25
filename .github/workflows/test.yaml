@@ -1,25 +1,26 @@
 name: Castrol Auto Login
 
 on:
-  workflow_dispatch: # Allows you to run it manually for testing
+  workflow_dispatch: 
+  schedule:
+    - cron: '30 2 * * *'
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # Upgraded to v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Upgraded to v5
         with:
           python-version: '3.9'
 
-      - name: Install Chrome and Dependencies
+      - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          pip install selenium
+          python -m pip install --upgrade pip
+          pip install selenium webdriver-manager
 
       - name: Run Script
         env:
@@ -29,7 +30,7 @@ jobs:
 
       - name: Upload Error Screenshot
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # FIXED: Upgraded from v3 to v4
         with:
           name: error-log
           path: login_error.png

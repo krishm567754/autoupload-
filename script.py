@@ -18,32 +18,34 @@ def filter_current_month(file_path):
         import warnings
         df = pd.read_excel(file_path)
         
-        # STRICTLY target 'Invoice Date' so we don't accidentally grab 'Convertion Date'
+        # Target exact column name from your provided sample
         date_col = "Invoice Date"
         if date_col not in df.columns:
             possible_cols = [col for col in df.columns if 'invoice date' in str(col).lower()]
             if possible_cols:
                 date_col = possible_cols[0]
             else:
-                print("⚠️ Could not detect an 'Invoice Date' column. Uploading full file as safety fallback.")
+                print("⚠️ Could not detect 'Invoice Date' column. Uploading full file as safety fallback.")
                 return
 
         original_row_count = len(df)
         print(f"📅 Using column: '{date_col}' for filtering...")
         
-        # Suppress warnings and force American/ISO parsing as per your file format
+        # Suppress warnings and parse using the exact YYYY-MM-DD format seen in your sample
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            df['parsed_date'] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=False)
+            # Pandas is very smart at reading YYYY-MM-DD format
+            df['parsed_date'] = pd.to_datetime(df[date_col], errors='coerce')
         
         now = datetime.datetime.now()
         current_month = now.month
         current_year = now.year
         
-        # Filter for current month and year
+        # Keep only rows where the parsed date matches current month AND year
         filtered_df = df[(df['parsed_date'].dt.month == current_month) & (df['parsed_date'].dt.year == current_year)]
         filtered_df = filtered_df.drop(columns=['parsed_date'])
         
+        # Overwrite the file with just the current month's data
         filtered_df.to_excel(file_path, index=False)
         
         new_row_count = len(filtered_df)
@@ -52,29 +54,25 @@ def filter_current_month(file_path):
     except Exception as e:
         print(f"⚠️ Excel filtering failed: {e}. Proceeding with original unfiltered file.")
 
-def upload_to_ftp(local_file_path):
-    FTP_HOST = "ftpupload.net"
-    FTP_USER = "if0_40253796"
-    FTP_PASS = "TL1pBn84f4JIXtI"
-    REMOTE_FOLDER = "htdocs/sales_data"
-    TARGET_FILENAME = "invoice.xlsx"
-
-    print(f"☁️ Connecting to FTP: {FTP_HOST}...")
+def upload_to_ftp(local_file_path, ftp_host, ftp_user, ftp_pass, remote_folder, target_filename):
+    print(f"☁️ Connecting to FTP Server: {ftp_user}@{ftp_host}...")
     try:
-        with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
+        with ftplib.FTP(ftp_host, ftp_user, ftp_pass) as ftp:
             ftp.encoding = "utf-8"
-            print(f"📂 Navigating to {REMOTE_FOLDER}...")
-            ftp.cwd(REMOTE_FOLDER)
+            print(f"📂 Navigating to {remote_folder}...")
+            ftp.cwd(remote_folder)
             
-            if TARGET_FILENAME in ftp.nlst():
-                ftp.delete(TARGET_FILENAME)
+            # Delete old file ONLY if the filename already exists (Overwrites current month, leaves past months safe)
+            if target_filename in ftp.nlst():
+                print(f"🗑️ Deleting existing {target_filename} to replace it...")
+                ftp.delete(target_filename)
                 
-            print(f"📤 Uploading fresh {TARGET_FILENAME}...")
+            print(f"📤 Uploading file as {target_filename}...")
             with open(local_file_path, "rb") as file:
-                ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
+                ftp.storbinary(f"STOR {target_filename}", file)
             print("🎯 FTP Upload Complete!")
     except Exception as e:
-        print(f"❌ FTP Error: {e}")
+        print(f"❌ FTP Error on {ftp_user}: {e}")
         raise e
 
 def castrol_automation():
@@ -178,60 +176,99 @@ def castrol_automation():
         if not download_success:
             raise Exception("❌ Download failed: No XLSX file arrived.")
 
-        # --- PHASE 5: FILE PROCESS, FILTER, & UPLOAD ---
+        # --- PHASE 5: FILE PROCESS & FILTERING ---
         xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
         latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
-        final_local_path = os.path.join(download_dir, "invoice.xlsx")
+        local_path = os.path.join(download_dir, "temp_filtered.xlsx")
         
-        if os.path.exists(final_local_path): os.remove(final_local_path)
-        os.rename(latest_file, final_local_path)
+        if os.path.exists(local_path): os.remove(local_path)
+        os.rename(latest_file, local_path)
         
-        # Trigger the newly fixed Pandas filter
-        filter_current_month(final_local_path)
+        # Strip out old months
+        filter_current_month(local_path)
         
-        upload_to_ftp(final_local_path)
+        # --- PHASE 6: DUAL FTP UPLOADS ---
+        print("\n=== STARTING FTP UPLOADS ===")
+        # Server 1: Primary Website
+        upload_to_ftp(
+            local_file_path=local_path,
+            ftp_host="ftpupload.net",
+            ftp_user="if0_40253796",
+            ftp_pass="TL1pBn84f4JIXtI",
+            remote_folder="htdocs/sales_data",
+            target_filename="invoice.xlsx"
+        )
+        
+        # Server 2: Archive Website
+        now = datetime.datetime.now()
+        archive_filename = f"{now.year}_{now.month:02d}.xlsx" # Example: 2026_04.xlsx
+        upload_to_ftp(
+            local_file_path=local_path,
+            ftp_host="ftpupload.net",
+            ftp_user="if0_40314734",
+            ftp_pass="qKLu7SxmpJb65",
+            remote_folder="htdocs/monthly_data",
+            target_filename=archive_filename
+        )
+        print("=== FTP UPLOADS COMPLETE ===\n")
 
-        # --- PHASE 6: DASHBOARD REFRESH WITH POPUP HANDLING ---
-        print(f"🌐 Visiting Dashboard to Trigger Refresh...")
+        # --- PHASE 7: WEBSITE 1 REFRESH (WITH POPUP) ---
+        print(f"🌐 Visiting Website 1 (krishmo.xo.je)...")
         driver.get(f"https://krishmo.xo.je/?i=1&t={int(time.time())}")
         time.sleep(8)
         
         try:
             refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
             driver.execute_script("arguments[0].click();", refresh_btn)
-            print("🔄 Dashboard Refresh Clicked! Looking for Popup...")
             
-            # --- HANDLE THE BROWSER POPUP ("OK") ---
             try:
                 WebDriverWait(driver, 5).until(EC.alert_is_present())
-                alert = driver.switch_to.alert
-                print(f"🔔 Popup text: {alert.text}")
-                alert.accept()
-                print("✅ Clicked 'OK' on the popup! Monitoring JS Engine...")
-            except TimeoutException:
-                print("⚠️ No popup appeared, proceeding to monitor JS...")
+                driver.switch_to.alert.accept()
+                print("✅ Clicked 'OK' on Website 1 popup! Monitoring JS Engine...")
+            except:
+                pass
             
-            # --- MONITOR THE LOADER STATUS ---
             last_status = ""
-            for check in range(40): 
+            for check in range(30): 
                 time.sleep(2)
                 try:
                     current_status = driver.execute_script("return document.getElementById('loader-text').innerText;")
-                    
                     if current_status and current_status != last_status:
-                        print(f"📡 Dashboard Status: {current_status}")
+                        print(f"📡 Website 1 Status: {current_status}")
                         last_status = current_status
-                        
                     if "Done" in str(current_status):
-                        print("✅ Cache rebuilt and saved successfully by your Dashboard!")
+                        print("✅ Website 1 Cache rebuilt successfully!")
                         break
-                except:
-                    pass 
+                except: pass
+        except Exception as e:
+            print(f"⚠️ Website 1 refresh issue: {e}")
 
-        except Exception as refresh_err:
-            print(f"⚠️ Dashboard refresh process encountered an issue: {refresh_err}")
+        # --- PHASE 8: WEBSITE 2 REFRESH (NO POPUP) ---
+        print(f"\n🌐 Visiting Website 2 (krishmodiexp.xo.je)...")
+        driver.get(f"https://krishmodiexp.xo.je/?i=1&t={int(time.time())}")
+        time.sleep(8)
+        
+        try:
+            refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
+            driver.execute_script("arguments[0].click();", refresh_btn)
+            print("🔄 Website 2 Refresh Clicked! (No popup expected). Monitoring JS Engine...")
+            
+            last_status = ""
+            for check in range(30): 
+                time.sleep(2)
+                try:
+                    current_status = driver.execute_script("return document.getElementById('loader-text').innerText;")
+                    if current_status and current_status != last_status:
+                        print(f"📡 Website 2 Status: {current_status}")
+                        last_status = current_status
+                    if "Done" in str(current_status):
+                        print("✅ Website 2 Cache rebuilt successfully!")
+                        break
+                except: pass
+        except Exception as e:
+            print(f"⚠️ Website 2 refresh issue: {e}")
 
-        print("🏁 MISSION COMPLETE! Fully updated and cached.")
+        print("\n🏁 MISSION COMPLETE! All websites fully updated and cached.")
 
     except Exception as e:
         print(f"❌ Automation Error: {e}")

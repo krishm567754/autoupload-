@@ -32,84 +32,63 @@ try:
 
     # ===== LOGIN =====
     print("Logging in...")
-
     driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
     driver.find_element(By.NAME, "Password").submit()
-
     time.sleep(5)
 
-    # ===== HANDLE POPUP (IMPORTANT) =====
-    print("Checking for session popup...")
+    # ===== HANDLE POPUP =====
+    print("Checking popup...")
+    logout_popup = driver.find_elements(By.XPATH, "//*[contains(text(),'Logout')]")
+    if logout_popup:
+        print("Popup found → clicking logout")
+        logout_popup[0].click()
+        time.sleep(5)
 
-    try:
-        logout_popup = driver.find_elements(
-            By.XPATH,
-            "//*[contains(text(),'Logout')] | //button[contains(text(),'Logout')]"
-        )
+        # re-login
+        driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
+        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+        driver.find_element(By.NAME, "Password").submit()
+        time.sleep(6)
 
-        if logout_popup:
-            print("Popup detected → clicking Logout...")
-            logout_popup[0].click()
-            time.sleep(5)
-
-            # After logout, login again
-            print("Re-login after logout...")
-
-            driver.find_element(By.NAME, "UserId").clear()
-            driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
-
-            driver.find_element(By.NAME, "Password").clear()
-            driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-
-            driver.find_element(By.NAME, "Password").submit()
-            time.sleep(6)
-
-    except Exception as e:
-        print("No popup or error handling popup:", e)
-
-    print("Current URL after login:", driver.current_url)
-
-    if "login" in driver.current_url.lower():
-        raise Exception("Login failed ❌")
-
-    print("Login successful ✅")
+    print("Login done, URL:", driver.current_url)
 
     # ===== OPEN REPORT PAGE =====
-    print("Opening report page...")
     driver.get("https://cildist.castroldms.com/Reports/InvoiceDataToExcel")
     time.sleep(8)
 
-    print("Searching Load Data...")
-
-    load_btns = driver.find_elements(
-        By.XPATH,
-        "//*[contains(text(),'Load')] | //input[contains(@value,'Load')]"
-    )
-
+    # ===== CLICK LOAD DATA =====
+    print("Click Load Data...")
+    load_btns = driver.find_elements(By.XPATH, "//input[contains(@value,'Load')] | //button[contains(.,'Load')]")
     if load_btns:
         load_btns[0].click()
-        print("Clicked Load Data")
     else:
         raise Exception("Load Data not found")
 
     time.sleep(6)
 
-    print("Searching Excel button...")
+    # ===== CLICK SAVE AS EXCEL =====
+    print("Click Save as Excel...")
 
-    excel_btns = driver.find_elements(
-        By.XPATH,
-        "//*[contains(text(),'Excel')] | //input[contains(@value,'Excel')]"
+    excel_btns = driver.find_elements(By.XPATH,
+        "//*[contains(text(),'Excel')] | " +
+        "//input[contains(@value,'Excel')] | " +
+        "//*[contains(@class,'excel')] | " +
+        "//i[contains(@class,'excel')]"
     )
 
+    print("Excel buttons found:", len(excel_btns))
+
     if excel_btns:
-        excel_btns[0].click()
-        print("Clicked Excel")
+        driver.execute_script("arguments[0].click();", excel_btns[0])
+        print("Excel clicked ✅")
     else:
+        driver.save_screenshot("excel_not_found.png")
         raise Exception("Excel button not found")
 
     time.sleep(12)
 
+    # ===== CHECK DOWNLOAD =====
     files = os.listdir(DOWNLOAD_DIR)
     print("Downloaded files:", files)
 

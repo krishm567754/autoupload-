@@ -1,5 +1,6 @@
 import os
 import time
+import datetime
 import ftplib
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -15,9 +16,7 @@ def upload_to_ftp(local_file_path):
     FTP_USER = "if0_40253796"
     FTP_PASS = "TL1pBn84f4JIXtI"
     REMOTE_FOLDER = "htdocs/sales_data"
-    
-    # 🎯 Changed to match your Dashboard's JS fetch logic!
-    TARGET_FILENAME = "sales_data.xlsx" 
+    TARGET_FILENAME = "invoice.xlsx"
 
     print(f"☁️ Connecting to FTP: {FTP_HOST}...")
     try:
@@ -26,13 +25,13 @@ def upload_to_ftp(local_file_path):
             print(f"📂 Navigating to {REMOTE_FOLDER}...")
             ftp.cwd(REMOTE_FOLDER)
 
-            # Delete the previous file if it exists
+            # Delete the previous file if it exists to ensure a clean upload
             files_in_folder = ftp.nlst()
             if TARGET_FILENAME in files_in_folder:
                 print(f"🗑️ Deleting existing {TARGET_FILENAME}...")
                 ftp.delete(TARGET_FILENAME)
 
-            # Upload the new file
+            # Upload the new file in binary mode
             print(f"📤 Uploading fresh {TARGET_FILENAME}...")
             with open(local_file_path, "rb") as file:
                 ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
@@ -42,13 +41,10 @@ def upload_to_ftp(local_file_path):
         raise e
 
 def castrol_automation():
+    # 1. Setup Download Directory
     download_dir = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
-
-    # Clean up any old files from previous failed runs before starting
-    for f in os.listdir(download_dir):
-        os.remove(os.path.join(download_dir, f))
 
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
@@ -59,12 +55,13 @@ def castrol_automation():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
+    # Enable headless downloads
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": download_dir
     })
 
-    wait = WebDriverWait(driver, 35)
+    wait = WebDriverWait(driver, 40)
 
     try:
         # --- PHASE 1: LOGIN ---
@@ -76,19 +73,20 @@ def castrol_automation():
         user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
         user_field.send_keys(USERNAME)
         driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+        
         login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
         driver.execute_script("arguments[0].click();", login_btn)
 
         # --- PHASE 2: SESSION CONFLICT ---
-        time.sleep(7)
+        time.sleep(8)
         if "already logged in" in driver.page_source.lower():
             print("⚠️ Session conflict detected! Forcing logout...")
             try:
                 found_logout_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
                 if found_logout_buttons:
                     driver.execute_script("arguments[0].click();", found_logout_buttons[0])
-                    print("🖱️ Logout button clicked...")
-                    time.sleep(5)
+                    time.sleep(6)
+                    # Re-enter credentials
                     wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
                     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
                     driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
@@ -96,8 +94,8 @@ def castrol_automation():
                 print(f"⚠️ Conflict bypass attempt failed: {e}")
 
         # --- PHASE 3: NAVIGATION ---
-        print("📂 Navigating directly to Invoice Export page...")
-        time.sleep(3)
+        print("📂 Navigating to Invoice Export page...")
+        time.sleep(4)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
         # --- PHASE 4: DOWNLOAD ---
@@ -105,41 +103,53 @@ def castrol_automation():
         excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        # 🎯 Dynamic Wait logic (Checks every 1 second up to 120 seconds)
-        print("⏳ Waiting for file download to complete...")
-        download_timeout = 120
-        file_ready = False
-        
-        for _ in range(download_timeout):
-            all_files = os.listdir(download_dir)
-            xlsx_files = [f for f in all_files if f.endswith('.xlsx')]
-            temp_files = [f for f in all_files if f.endswith('.crdownload') or f.endswith('.tmp')]
-            
-            # If we have an xlsx file and no active Chrome temp downloads, it's done!
-            if xlsx_files and not temp_files:
-                file_ready = True
-                break
-            time.sleep(1)
-
-        if not file_ready:
-            raise Exception("❌ Download timed out. The file took too long or failed to generate.")
+        print("⏳ Waiting for report generation (60s)...")
+        time.sleep(60) 
 
         # --- PHASE 5: FILE PROCESS & UPLOAD ---
         files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
-        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
-        final_local_path = os.path.join(download_dir, "sales_data.xlsx")
-        
-        if os.path.exists(final_local_path):
-            os.remove(final_local_path)
+        if not files:
+            time.sleep(15) # Extra buffer
+            files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
+
+        if files:
+            latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
+            final_local_path = os.path.join(download_dir, "invoice.xlsx")
             
-        os.rename(latest_file, final_local_path)
-        print(f"✅ File {final_local_path} ready for upload.")
+            if os.path.exists(final_local_path):
+                os.remove(final_local_path)
+                
+            os.rename(latest_file, final_local_path)
+            print(f"✅ File renamed to invoice.xlsx. Starting FTP upload...")
+            
+            upload_to_ftp(final_local_path)
+        else:
+            raise Exception("❌ No Excel file found in downloads folder.")
+
+        # --- PHASE 6: DASHBOARD REFRESH ---
+        # Using a timestamp to bypass any hosting cache
+        timestamp = int(time.time())
+        dashboard_url = f"https://krishmo.xo.je/?i=1&t={timestamp}"
         
-        upload_to_ftp(final_local_path)
+        print(f"🌐 Visiting Dashboard: {dashboard_url}")
+        driver.get(dashboard_url)
+        time.sleep(10) # Wait for page load
+        
+        try:
+            print("🔄 Locating and clicking the footer refresh button...")
+            # ID from your dashboard code: id="refresh-button"
+            refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
+            driver.execute_script("arguments[0].click();", refresh_btn)
+            print("✨ Dashboard refresh triggered!")
+            time.sleep(5)
+        except Exception as e:
+            print(f"⚠️ Could not click refresh button: {e}")
+
+        print("🏁 MISSION COMPLETE! Data updated and Dashboard refreshed.")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
-        driver.save_screenshot("final_error_debug.png")
+        print(f"❌ Automation Error: {e}")
+        driver.save_screenshot("error_debug.png")
         raise e 
     finally:
         driver.quit()

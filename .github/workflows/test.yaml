@@ -1,9 +1,13 @@
 name: Castrol Auto Sync
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch: # Allows you to still click the "Run workflow" button manually
   schedule:
-    - cron: '30 2 * * *' # Runs daily at 2:30 AM UTC
+    # 1. Runs everyday at 7:30 PM IST (14:00 UTC)
+    - cron: '0 14 * * *'
+    
+    # 2. Runs every Saturday every hour from 5:00 PM to 10:00 PM IST (11:30 to 16:30 UTC)
+    - cron: '30 11-16 * * 6'
 
 jobs:
   run-automation:

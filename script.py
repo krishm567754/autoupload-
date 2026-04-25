@@ -1,6 +1,7 @@
 import os
 import time
 import datetime
+import ftplib
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -9,8 +10,40 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+def upload_to_ftp(local_file_path):
+    # FTP Configuration based on your details
+    FTP_HOST = "ftpupload.net"
+    FTP_USER = "if0_40253796"
+    FTP_PASS = "TL1pBn84f4JIXtI"
+    REMOTE_FOLDER = "htdocs/sales_data"
+    TARGET_FILENAME = "invoice.xlsx"
+
+    print(f"☁️ Connecting to FTP: {FTP_HOST}...")
+    try:
+        with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
+            ftp.encoding = "utf-8"
+            
+            # Navigate to the target folder
+            print(f"📂 Navigating to {REMOTE_FOLDER}...")
+            ftp.cwd(REMOTE_FOLDER)
+
+            # Delete the previous file if it exists
+            files_in_folder = ftp.nlst()
+            if TARGET_FILENAME in files_in_folder:
+                print(f"🗑️ Deleting existing {TARGET_FILENAME}...")
+                ftp.delete(TARGET_FILENAME)
+
+            # Upload the new file
+            print(f"📤 Uploading fresh {TARGET_FILENAME}...")
+            with open(local_file_path, "rb") as file:
+                ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
+            
+            print("🎯 FTP Upload Complete!")
+    except Exception as e:
+        print(f"❌ FTP Error: {e}")
+        raise e
+
 def castrol_automation():
-    # 1. Setup Download Directory
     download_dir = os.path.join(os.getcwd(), "downloads")
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
@@ -21,11 +54,9 @@ def castrol_automation():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # Initialize Driver with Auto-Managed Chrome Driver
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # CRITICAL: Fix for headless downloads in GitHub Actions
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": download_dir
@@ -34,88 +65,60 @@ def castrol_automation():
     wait = WebDriverWait(driver, 35)
 
     try:
-        # --- PHASE 1: LOGIN ---
+        # --- LOGIN ---
         print("🚀 Opening Castrol Portal...")
         driver.get("https://cildist.castroldms.com")
-
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        print(f"🔑 Entering credentials for: {USERNAME}")
         user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
-        user_field.clear()
         user_field.send_keys(USERNAME)
-        
-        pass_field = driver.find_element(By.NAME, "Password")
-        pass_field.clear()
-        pass_field.send_keys(PASSWORD)
-        
-        # Click the login button using the submit type
-        login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+        login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
         driver.execute_script("arguments[0].click();", login_btn)
 
-        # --- PHASE 2: SESSION CONFLICT ---
         time.sleep(7)
+        # Handle Session Conflict
         if "already logged in" in driver.page_source.lower():
-            print("⚠️ Session conflict detected! Forcing logout...")
-            try:
-                logout_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Logout')]")
-                driver.execute_script("arguments[0].click();", logout_btn)
-                time.sleep(4)
-                # Re-login
-                wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+            logout_btn = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
+            if logout_btns:
+                driver.execute_script("arguments[0].click();", logout_btns[0])
+                time.sleep(5)
+                driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
                 driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
                 driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
-            except:
-                print("Proceeding past conflict check...")
 
-        # --- PHASE 3: NAVIGATION ---
-        print("📂 Navigating to Invoice Export page...")
-        # Give it a moment to ensure login redirect is fully done
-        time.sleep(3)
+        # --- DOWNLOAD ---
+        print("📂 Navigating to Export page...")
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
-        # --- PHASE 4: DOWNLOAD (Based on your React Logs) ---
-        print("💾 Locating 'Save as Excel' button...")
-        # Using XPATH 'contains' to match "Save as Excel " exactly from your react logs
-        excel_xpath = "//button[contains(., 'Save as Excel')]"
-        excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, excel_xpath)))
-        
-        print("🖱️ Clicking Download button via JS...")
+        excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        # Wait for the "Loading..." spinner to finish (seen in video)
-        print("⏳ Waiting for generation and download (45s)...")
+        print("⏳ Waiting for download (45s)...")
         time.sleep(45) 
 
-        # --- PHASE 5: FILE VERIFICATION ---
-        files = os.listdir(download_dir)
-        xlsx_files = [f for f in files if f.endswith('.xlsx')]
+        # --- PROCESS FILE ---
+        files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
+        if not files:
+            raise Exception("❌ No Excel file found in downloads.")
 
-        if not xlsx_files:
-            # Check again after a small extra buffer
-            time.sleep(10)
-            xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
-
-        if xlsx_files:
-            # Sort by creation time to get the newest file
-            latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
-            date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-            new_filename = f"sales_{date_str}.xlsx"
-            new_path = os.path.join(download_dir, new_filename)
-            
-            os.rename(latest_file, new_path)
-            print(f"✅ SUCCESS: File saved as {new_filename}")
-            return new_path
+        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
+        # We don't need the date in the local filename anymore since it's becoming 'invoice.xlsx' on FTP
+        final_local_path = os.path.join(download_dir, "invoice.xlsx")
         
-        raise Exception("❌ File not found in downloads folder. Check debug screenshot.")
+        if os.path.exists(final_local_path):
+            os.remove(final_local_path)
+            
+        os.rename(latest_file, final_local_path)
+        print("✅ File renamed locally to invoice.xlsx")
+        
+        # --- UPLOAD ---
+        upload_to_ftp(final_local_path)
 
     except Exception as e:
-        print(f"❌ Automation Error: {e}")
-        driver.save_screenshot("debug_screenshot.png")
-        # Save HTML so we can see the exact state of the buttons if it fails
-        with open("debug_source.html", "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
+        print(f"❌ Error: {e}")
+        driver.save_screenshot("final_error.png")
         raise e 
     finally:
         driver.quit()

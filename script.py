@@ -30,65 +30,55 @@ try:
     driver.get("https://cildist.castroldms.com")
     time.sleep(3)
 
-    # ===== LOGIN =====
+    # ===== LOGIN (KEEP SIMPLE & SAME) =====
     print("Logging in...")
     driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
     driver.find_element(By.NAME, "Password").submit()
-    time.sleep(5)
 
-    # ===== HANDLE POPUP =====
-    print("Checking popup...")
-    logout_popup = driver.find_elements(By.XPATH, "//*[contains(text(),'Logout')]")
-    if logout_popup:
-        print("Popup found → clicking logout")
-        logout_popup[0].click()
-        time.sleep(5)
-
-        # re-login
-        driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
-        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-        driver.find_element(By.NAME, "Password").submit()
-        time.sleep(6)
-
-    print("Login done, URL:", driver.current_url)
+    time.sleep(6)
+    print("After login URL:", driver.current_url)
 
     # ===== OPEN REPORT PAGE =====
-    driver.get("https://cildist.castroldms.com/Reports/InvoiceDataToExcel")
+    driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
     time.sleep(8)
 
-    # ===== CLICK LOAD DATA =====
-    print("Click Load Data...")
-    load_btns = driver.find_elements(By.XPATH, "//input[contains(@value,'Load')] | //button[contains(.,'Load')]")
-    if load_btns:
-        load_btns[0].click()
-    else:
-        raise Exception("Load Data not found")
+    print("Finding buttons...")
+
+    buttons = driver.find_elements(By.CLASS_NAME, "btn")
+    print("Total buttons found:", len(buttons))
+
+    # ===== CLICK LOAD DATA (usually first primary button) =====
+    for btn in buttons:
+        if "btn-primary" in btn.get_attribute("class"):
+            print("Clicking Load Data button...")
+            driver.execute_script("arguments[0].click();", btn)
+            break
 
     time.sleep(6)
 
-    # ===== CLICK SAVE AS EXCEL =====
-    print("Click Save as Excel...")
+    # ===== CLICK EXCEL BUTTON =====
+    print("Searching Excel button...")
 
-    excel_btns = driver.find_elements(By.XPATH,
-        "//*[contains(text(),'Excel')] | " +
-        "//input[contains(@value,'Excel')] | " +
-        "//*[contains(@class,'excel')] | " +
-        "//i[contains(@class,'excel')]"
-    )
+    buttons = driver.find_elements(By.CLASS_NAME, "btn")
+    print("Buttons after load:", len(buttons))
 
-    print("Excel buttons found:", len(excel_btns))
+    # try clicking second primary button (Excel)
+    clicked = False
+    for btn in buttons:
+        cls = btn.get_attribute("class")
+        if "btn-success" in cls or "excel" in cls:
+            driver.execute_script("arguments[0].click();", btn)
+            clicked = True
+            print("Clicked Excel")
+            break
 
-    if excel_btns:
-        driver.execute_script("arguments[0].click();", excel_btns[0])
-        print("Excel clicked ✅")
-    else:
-        driver.save_screenshot("excel_not_found.png")
-        raise Exception("Excel button not found")
+    if not clicked:
+        print("Trying fallback click...")
+        driver.execute_script("arguments[0].click();", buttons[-1])
 
     time.sleep(12)
 
-    # ===== CHECK DOWNLOAD =====
     files = os.listdir(DOWNLOAD_DIR)
     print("Downloaded files:", files)
 

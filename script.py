@@ -1,6 +1,5 @@
 import os
 import time
-import datetime
 import ftplib
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -8,23 +7,29 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 def upload_to_ftp(local_file_path):
+    # FTP Configuration
     FTP_HOST = "ftpupload.net"
     FTP_USER = "if0_40253796"
     FTP_PASS = "TL1pBn84f4JIXtI"
     REMOTE_FOLDER = "htdocs/sales_data"
-    TARGET_FILENAME = "invoice.xlsx"
+    TARGET_FILENAME = "sales_data.xlsx" 
 
     print(f"☁️ Connecting to FTP: {FTP_HOST}...")
     try:
         with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
             ftp.encoding = "utf-8"
+            print(f"📂 Navigating to {REMOTE_FOLDER}...")
             ftp.cwd(REMOTE_FOLDER)
-            if TARGET_FILENAME in ftp.nlst():
+
+            files_in_folder = ftp.nlst()
+            if TARGET_FILENAME in files_in_folder:
+                print(f"🗑️ Deleting existing {TARGET_FILENAME}...")
                 ftp.delete(TARGET_FILENAME)
+
+            print(f"📤 Uploading fresh {TARGET_FILENAME}...")
             with open(local_file_path, "rb") as file:
                 ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
             print("🎯 FTP Upload Complete!")
@@ -34,88 +39,60 @@ def upload_to_ftp(local_file_path):
 
 def castrol_automation():
     download_dir = os.path.join(os.getcwd(), "downloads")
-    if not os.path.exists(download_dir): os.makedirs(download_dir)
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+    for f in os.listdir(download_dir):
+        os.remove(os.path.join(download_dir, f))
 
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled") 
     
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}") 
-    
-    prefs = {"download.default_directory": download_dir, "download.prompt_for_download": False}
-    chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"]) 
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.execute_cdp_cmd("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": download_dir})
-    
-    wait = WebDriverWait(driver, 25)
+
+    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+        "behavior": "allow",
+        "downloadPath": download_dir
+    })
+
+    wait = WebDriverWait(driver, 35)
 
     try:
+        # --- PHASE 1: LOGIN ---
+        print("🚀 Opening Castrol Portal...")
+        driver.get("https://cildist.castroldms.com")
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        # --- PHASE 1: INITIAL LOGIN ---
-        print("🚀 Opening Castrol Portal...")
-        login_success = False
-        
-        for attempt in range(3):
-            try:
-                driver.get("https://cildist.castroldms.com")
-                user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
-                user_field.clear()
-                user_field.send_keys(USERNAME)
-                
-                pass_field = driver.find_element(By.NAME, "Password")
-                pass_field.clear()
-                pass_field.send_keys(PASSWORD)
-                
-                driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
-                login_success = True
-                break 
-            except TimeoutException:
-                print(f"⚠️ Portal load attempt {attempt + 1} failed. Retrying...")
-                time.sleep(5)
-                
-        if not login_success:
-            raise Exception("❌ Failed to load the login page after 3 attempts.")
+        user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
+        user_field.send_keys(USERNAME)
+        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+        login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+        driver.execute_script("arguments[0].click();", login_btn)
 
-        # --- PHASE 2: SMART SESSION RECOVERY ---
-        time.sleep(10)
+        # --- PHASE 2: SESSION CONFLICT ---
+        time.sleep(7)
         if "already logged in" in driver.page_source.lower():
             print("⚠️ Session conflict detected! Forcing logout...")
-            logout_btns = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
-            if logout_btns:
-                driver.execute_script("arguments[0].click();", logout_btns[0])
-                time.sleep(5)
-                
-                print("🔄 Reloading portal to verify state...")
-                driver.get("https://cildist.castroldms.com")
-                time.sleep(5)
-                
-                # Check if it threw us back to the login screen using find_elements (which doesn't crash if missing)
-                user_fields = driver.find_elements(By.NAME, "UserId")
-                if user_fields:
-                    print("🔑 Portal returned to login screen. Re-entering credentials...")
-                    user_fields[0].clear()
-                    user_fields[0].send_keys(USERNAME)
-                    driver.find_element(By.NAME, "Password").clear()
+            try:
+                found_logout_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
+                if found_logout_buttons:
+                    driver.execute_script("arguments[0].click();", found_logout_buttons[0])
+                    print("🖱️ Logout button clicked...")
+                    time.sleep(5)
+                    wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
                     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
                     driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
-                    time.sleep(8)
-                else:
-                    print("✅ Session successfully taken over. Forwarded to dashboard.")
+            except Exception as e:
+                print(f"⚠️ Conflict bypass attempt failed: {e}")
 
         # --- PHASE 3: NAVIGATION ---
-        print("📂 Navigating to Export page...")
-        # Give it a moment to ensure any dashboard scripts finish loading
-        time.sleep(4)
+        print("📂 Navigating directly to Invoice Export page...")
+        time.sleep(3)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
         # --- PHASE 4: DOWNLOAD ---
@@ -123,48 +100,62 @@ def castrol_automation():
         excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        print("⏳ Monitoring Download Folder (Up to 90s)...")
-        download_success = False
-        for i in range(9):
-            time.sleep(10)
-            current_files = os.listdir(download_dir)
-            print(f"📁 Files found: {current_files}")
-            if any(f.endswith('.xlsx') for f in current_files):
-                download_success = True
-                break
+        print("⏳ Waiting for file download to complete...")
+        download_timeout = 120
+        file_ready = False
         
-        if not download_success:
-            raise Exception("❌ Download failed: No XLSX file arrived.")
+        for _ in range(download_timeout):
+            all_files = os.listdir(download_dir)
+            xlsx_files = [f for f in all_files if f.endswith('.xlsx')]
+            temp_files = [f for f in all_files if f.endswith('.crdownload') or f.endswith('.tmp')]
+            
+            if xlsx_files and not temp_files:
+                file_ready = True
+                break
+            time.sleep(1)
+
+        if not file_ready:
+            raise Exception("❌ Download timed out. The file took too long or failed to generate.")
 
         # --- PHASE 5: FILE PROCESS & UPLOAD ---
-        xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
-        latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
-        final_local_path = os.path.join(download_dir, "invoice.xlsx")
+        files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
+        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
+        final_local_path = os.path.join(download_dir, "sales_data.xlsx")
         
-        if os.path.exists(final_local_path): os.remove(final_local_path)
+        if os.path.exists(final_local_path):
+            os.remove(final_local_path)
+            
         os.rename(latest_file, final_local_path)
-        print(f"✅ Local file ready: {final_local_path}")
+        print(f"✅ File {final_local_path} ready for upload.")
         
         upload_to_ftp(final_local_path)
 
-        # --- PHASE 6: WEBSITE REFRESH ---
-        print(f"🌐 Refreshing Dashboard: https://krishmo.xo.je/?i=1")
-        driver.get(f"https://krishmo.xo.je/?i=1&t={int(time.time())}")
-        time.sleep(10)
+        # --- PHASE 6: DASHBOARD REFRESH (WITH PROPER WAIT) ---
+        DASHBOARD_URL = "https://krishmodiexp.xo.je/" # Update if your URL is different
+        print(f"🌐 Opening Dashboard to Trigger Refresh: {DASHBOARD_URL}")
         
-        try:
-            refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
-            driver.execute_script("arguments[0].click();", refresh_btn)
-            print("🔄 Dashboard Refresh Clicked!")
-            time.sleep(5)
-        except:
-            print("⚠️ Dashboard refresh button not clicked, but page was visited.")
+        driver.get(DASHBOARD_URL)
+        time.sleep(5) # Let the page and initial JSON load completely
+        
+        # Find the sync button and click it
+        sync_btn = driver.find_element(By.CSS_SELECTOR, ".refresh-btn")
+        driver.execute_script("arguments[0].click();", sync_btn)
+        print("🔄 Dashboard Refresh Clicked!")
+        print("⏳ Waiting for Dashboard JS Engine to calculate and save cache (Don't close!)...")
 
-        print("🏁 MISSION COMPLETE!")
+        # 🚨 CRITICAL FIX: Wait for the dashboard HTML to show "✅ Synced" before allowing driver.quit()
+        WebDriverWait(driver, 120).until(
+            EC.text_to_be_present_in_element((By.ID, "syncStatus"), "✅ Synced")
+        )
+
+        print("🏁 MISSION COMPLETE! Dashboard is fully updated and cached.")
 
     except Exception as e:
-        print(f"❌ Automation Error: {e}")
-        driver.save_screenshot("debug_error.png")
+        print(f"❌ Error: {e}")
+        try:
+            driver.save_screenshot("final_error_debug.png")
+        except:
+            pass
         raise e 
     finally:
         driver.quit()

@@ -21,87 +21,101 @@ def castrol_automation():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     
+    # Initialize Driver with Auto-Managed Chrome Driver
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # Enable headless downloads
+    # CRITICAL: Fix for headless downloads in GitHub Actions
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": download_dir
     })
 
-    wait = WebDriverWait(driver, 30)
+    wait = WebDriverWait(driver, 35)
 
     try:
-        # --- PHASE 1: LOGIN (The logic that worked) ---
+        # --- PHASE 1: LOGIN ---
         print("🚀 Opening Castrol Portal...")
         driver.get("https://cildist.castroldms.com")
 
         USERNAME = os.getenv("SITE_USERNAME")
         PASSWORD = os.getenv("SITE_PASSWORD")
 
-        print(f"🔑 Logging in as: {USERNAME}")
+        print(f"🔑 Entering credentials for: {USERNAME}")
         user_field = wait.until(EC.presence_of_element_located((By.NAME, "UserId")))
+        user_field.clear()
         user_field.send_keys(USERNAME)
-        driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
         
-        # Click the login button using the submit type (as seen in screenshot)
+        pass_field = driver.find_element(By.NAME, "Password")
+        pass_field.clear()
+        pass_field.send_keys(PASSWORD)
+        
+        # Click the login button using the submit type
         login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
-        login_btn.click()
+        driver.execute_script("arguments[0].click();", login_btn)
 
         # --- PHASE 2: SESSION CONFLICT ---
-        time.sleep(5)
+        time.sleep(7)
         if "already logged in" in driver.page_source.lower():
-            print("⚠️ Session conflict! Forcing logout...")
+            print("⚠️ Session conflict detected! Forcing logout...")
             try:
                 logout_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Logout')]")
-                logout_btn.click()
-                time.sleep(3)
+                driver.execute_script("arguments[0].click();", logout_btn)
+                time.sleep(4)
                 # Re-login
                 wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
                 driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-                driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+                driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
             except:
                 print("Proceeding past conflict check...")
 
-        # --- PHASE 3: NAVIGATION & DOWNLOAD (Matches your video) ---
-        print("📂 Navigating directly to Invoice Export page...")
+        # --- PHASE 3: NAVIGATION ---
+        print("📂 Navigating to Invoice Export page...")
+        # Give it a moment to ensure login redirect is fully done
+        time.sleep(3)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
-        print("💾 Clicking 'Save as Excel'...")
-        # Finding the green button from your video
-        excel_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-success")))
-        excel_btn.click()
+        # --- PHASE 4: DOWNLOAD (Based on your React Logs) ---
+        print("💾 Locating 'Save as Excel' button...")
+        # Using XPATH 'contains' to match "Save as Excel " exactly from your react logs
+        excel_xpath = "//button[contains(., 'Save as Excel')]"
+        excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, excel_xpath)))
+        
+        print("🖱️ Clicking Download button via JS...")
+        driver.execute_script("arguments[0].click();", excel_btn)
         
         # Wait for the "Loading..." spinner to finish (seen in video)
-        print("⏳ Waiting for report generation and download (30s)...")
-        time.sleep(30) 
+        print("⏳ Waiting for generation and download (45s)...")
+        time.sleep(45) 
 
-        # --- PHASE 4: FILE VERIFICATION ---
+        # --- PHASE 5: FILE VERIFICATION ---
         files = os.listdir(download_dir)
-        if not files:
-            # If no file, check if it's still 'crdownload' (Chrome's temp format)
-            time.sleep(10)
-            files = os.listdir(download_dir)
+        xlsx_files = [f for f in files if f.endswith('.xlsx')]
 
-        if files:
-            # Get the actual .xlsx file (ignore temp files)
-            xlsx_files = [f for f in files if f.endswith('.xlsx')]
-            if xlsx_files:
-                latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
-                date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-                new_filename = f"sales_{date_str}.xlsx"
-                new_path = os.path.join(download_dir, new_filename)
-                
-                os.rename(latest_file, new_path)
-                print(f"✅ SUCCESS: File saved as {new_filename}")
-                return new_path
+        if not xlsx_files:
+            # Check again after a small extra buffer
+            time.sleep(10)
+            xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
+
+        if xlsx_files:
+            # Sort by creation time to get the newest file
+            latest_file = max([os.path.join(download_dir, f) for f in xlsx_files], key=os.path.getctime)
+            date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            new_filename = f"sales_{date_str}.xlsx"
+            new_path = os.path.join(download_dir, new_filename)
+            
+            os.rename(latest_file, new_path)
+            print(f"✅ SUCCESS: File saved as {new_filename}")
+            return new_path
         
-        raise Exception("❌ File was not found in the downloads folder.")
+        raise Exception("❌ File not found in downloads folder. Check debug screenshot.")
 
     except Exception as e:
         print(f"❌ Automation Error: {e}")
-        driver.save_screenshot("final_error_debug.png")
+        driver.save_screenshot("debug_screenshot.png")
+        # Save HTML so we can see the exact state of the buttons if it fails
+        with open("debug_source.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
         raise e 
     finally:
         driver.quit()

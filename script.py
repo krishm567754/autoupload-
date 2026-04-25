@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 def upload_to_ftp(local_file_path):
-    # FTP Configuration based on your details
+    # FTP Configuration
     FTP_HOST = "ftpupload.net"
     FTP_USER = "if0_40253796"
     FTP_PASS = "TL1pBn84f4JIXtI"
@@ -22,8 +22,6 @@ def upload_to_ftp(local_file_path):
     try:
         with ftplib.FTP(FTP_HOST, FTP_USER, FTP_PASS) as ftp:
             ftp.encoding = "utf-8"
-            
-            # Navigate to the target folder
             print(f"📂 Navigating to {REMOTE_FOLDER}...")
             ftp.cwd(REMOTE_FOLDER)
 
@@ -37,7 +35,6 @@ def upload_to_ftp(local_file_path):
             print(f"📤 Uploading fresh {TARGET_FILENAME}...")
             with open(local_file_path, "rb") as file:
                 ftp.storbinary(f"STOR {TARGET_FILENAME}", file)
-            
             print("🎯 FTP Upload Complete!")
     except Exception as e:
         print(f"❌ FTP Error: {e}")
@@ -65,7 +62,7 @@ def castrol_automation():
     wait = WebDriverWait(driver, 35)
 
     try:
-        # --- LOGIN ---
+        # --- PHASE 1: LOGIN ---
         print("🚀 Opening Castrol Portal...")
         driver.get("https://cildist.castroldms.com")
         USERNAME = os.getenv("SITE_USERNAME")
@@ -77,48 +74,62 @@ def castrol_automation():
         login_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
         driver.execute_script("arguments[0].click();", login_btn)
 
+        # --- PHASE 2: SESSION CONFLICT (Fixed Variable Name) ---
         time.sleep(7)
-        # Handle Session Conflict
         if "already logged in" in driver.page_source.lower():
-            logout_btn = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
-            if logout_btns:
-                driver.execute_script("arguments[0].click();", logout_btns[0])
-                time.sleep(5)
-                driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
-                driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
-                driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+            print("⚠️ Session conflict detected! Forcing logout...")
+            try:
+                # Find all buttons that contain the word 'Logout'
+                found_logout_buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Logout')]")
+                if found_logout_buttons:
+                    driver.execute_script("arguments[0].click();", found_logout_buttons[0])
+                    print("🖱️ Logout button clicked...")
+                    time.sleep(5)
+                    # Re-enter credentials after the popup clears
+                    wait.until(EC.presence_of_element_located((By.NAME, "UserId"))).send_keys(USERNAME)
+                    driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
+                    driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, "button[type='submit']"))
+            except Exception as e:
+                print(f"⚠️ Conflict bypass attempt failed: {e}")
 
-        # --- DOWNLOAD ---
-        print("📂 Navigating to Export page...")
+        # --- PHASE 3: NAVIGATION ---
+        print("📂 Navigating directly to Invoice Export page...")
+        time.sleep(3)
         driver.get("https://cildist.castroldms.com/reports/sales/invoicedatatoexcel")
 
+        # --- PHASE 4: DOWNLOAD ---
+        print("💾 Clicking 'Save as Excel'...")
+        # Using the exact text found in your React logs
         excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        print("⏳ Waiting for download (45s)...")
-        time.sleep(45) 
+        print("⏳ Waiting for generation and download (50s)...")
+        time.sleep(50) 
 
-        # --- PROCESS FILE ---
+        # --- PHASE 5: FILE PROCESS & UPLOAD ---
         files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
         if not files:
-            raise Exception("❌ No Excel file found in downloads.")
+            # Final check for delayed download
+            time.sleep(10)
+            files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
 
-        latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
-        # We don't need the date in the local filename anymore since it's becoming 'invoice.xlsx' on FTP
-        final_local_path = os.path.join(download_dir, "invoice.xlsx")
-        
-        if os.path.exists(final_local_path):
-            os.remove(final_local_path)
+        if files:
+            latest_file = max([os.path.join(download_dir, f) for f in files], key=os.path.getctime)
+            final_local_path = os.path.join(download_dir, "invoice.xlsx")
             
-        os.rename(latest_file, final_local_path)
-        print("✅ File renamed locally to invoice.xlsx")
-        
-        # --- UPLOAD ---
-        upload_to_ftp(final_local_path)
+            if os.path.exists(final_local_path):
+                os.remove(final_local_path)
+                
+            os.rename(latest_file, final_local_path)
+            print(f"✅ File {final_local_path} ready for upload.")
+            
+            upload_to_ftp(final_local_path)
+        else:
+            raise Exception("❌ No Excel file found in downloads folder.")
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        driver.save_screenshot("final_error.png")
+        driver.save_screenshot("final_error_debug.png")
         raise e 
     finally:
         driver.quit()

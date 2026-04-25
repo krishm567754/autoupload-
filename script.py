@@ -15,29 +15,35 @@ from webdriver_manager.chrome import ChromeDriverManager
 def filter_current_month(file_path):
     print("🧹 Opening Excel file to filter for Current Month only...")
     try:
+        import warnings
         df = pd.read_excel(file_path)
         
-        # Locate the date column dynamically
-        date_col = next((col for col in df.columns if 'date' in str(col).lower()), None)
-        
-        if not date_col:
-            print("⚠️ Could not detect a 'Date' column. Uploading full file as safety fallback.")
-            return
+        # STRICTLY target 'Invoice Date' so we don't accidentally grab 'Convertion Date'
+        date_col = "Invoice Date"
+        if date_col not in df.columns:
+            possible_cols = [col for col in df.columns if 'invoice date' in str(col).lower()]
+            if possible_cols:
+                date_col = possible_cols[0]
+            else:
+                print("⚠️ Could not detect an 'Invoice Date' column. Uploading full file as safety fallback.")
+                return
 
         original_row_count = len(df)
+        print(f"📅 Using column: '{date_col}' for filtering...")
         
-        # Convert to datetime using standard American parsing (MM/DD/YYYY)
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        # Suppress warnings and force American/ISO parsing as per your file format
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df['parsed_date'] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=False)
         
-        # Identify current month and year
         now = datetime.datetime.now()
         current_month = now.month
         current_year = now.year
         
-        # Keep only rows where the date matches current month AND year
-        filtered_df = df[(df[date_col].dt.month == current_month) & (df[date_col].dt.year == current_year)]
+        # Filter for current month and year
+        filtered_df = df[(df['parsed_date'].dt.month == current_month) & (df['parsed_date'].dt.year == current_year)]
+        filtered_df = filtered_df.drop(columns=['parsed_date'])
         
-        # Save back to the exact same file
         filtered_df.to_excel(file_path, index=False)
         
         new_row_count = len(filtered_df)
@@ -180,12 +186,12 @@ def castrol_automation():
         if os.path.exists(final_local_path): os.remove(final_local_path)
         os.rename(latest_file, final_local_path)
         
-        # Run Pandas to strip out old months!
+        # Trigger the newly fixed Pandas filter
         filter_current_month(final_local_path)
         
         upload_to_ftp(final_local_path)
 
-        # --- PHASE 6: DASHBOARD REFRESH WITH LIVE STATUS TRACKER ---
+        # --- PHASE 6: DASHBOARD REFRESH WITH POPUP HANDLING ---
         print(f"🌐 Visiting Dashboard to Trigger Refresh...")
         driver.get(f"https://krishmo.xo.je/?i=1&t={int(time.time())}")
         time.sleep(8)
@@ -193,10 +199,21 @@ def castrol_automation():
         try:
             refresh_btn = wait.until(EC.presence_of_element_located((By.ID, "refresh-button")))
             driver.execute_script("arguments[0].click();", refresh_btn)
-            print("🔄 Dashboard Refresh Clicked! Monitoring JS Engine...")
+            print("🔄 Dashboard Refresh Clicked! Looking for Popup...")
             
+            # --- HANDLE THE BROWSER POPUP ("OK") ---
+            try:
+                WebDriverWait(driver, 5).until(EC.alert_is_present())
+                alert = driver.switch_to.alert
+                print(f"🔔 Popup text: {alert.text}")
+                alert.accept()
+                print("✅ Clicked 'OK' on the popup! Monitoring JS Engine...")
+            except TimeoutException:
+                print("⚠️ No popup appeared, proceeding to monitor JS...")
+            
+            # --- MONITOR THE LOADER STATUS ---
             last_status = ""
-            for check in range(30): 
+            for check in range(40): 
                 time.sleep(2)
                 try:
                     current_status = driver.execute_script("return document.getElementById('loader-text').innerText;")
@@ -212,7 +229,7 @@ def castrol_automation():
                     pass 
 
         except Exception as refresh_err:
-            print(f"⚠️ Dashboard refresh button not found: {refresh_err}")
+            print(f"⚠️ Dashboard refresh process encountered an issue: {refresh_err}")
 
         print("🏁 MISSION COMPLETE! Fully updated and cached.")
 

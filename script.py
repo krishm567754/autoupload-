@@ -16,6 +16,12 @@ options = Options()
 options.add_argument("--headless")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
+
+# 🔥 IMPORTANT FIXES (session issue)
+options.add_argument("--incognito")
+options.add_argument("--disable-application-cache")
+options.add_argument("--disk-cache-size=0")
+
 options.binary_location = "/usr/bin/chromium-browser"
 
 prefs = {
@@ -32,20 +38,28 @@ try:
     driver.get("https://cildist.castroldms.com")
     time.sleep(3)
 
+    # ===== FORCE LOGOUT (VERY IMPORTANT) =====
+    print("Forcing logout (if already logged in)...")
+    driver.get("https://cildist.castroldms.com/logout")
+    time.sleep(3)
+
+    driver.get("https://cildist.castroldms.com")
+    time.sleep(3)
+
     # ===== LOGIN =====
     print("Logging in...")
 
     driver.find_element(By.NAME, "UserId").send_keys(USERNAME)
     driver.find_element(By.NAME, "Password").send_keys(PASSWORD)
 
-    # ✅ Correct form submit
+    # submit form properly
     driver.find_element(By.NAME, "Password").submit()
 
     time.sleep(8)
 
     print("Current URL after login:", driver.current_url)
 
-    # ✅ Proper login check
+    # check login success
     if "forget-password" in driver.current_url.lower() or "login" in driver.current_url.lower():
         print("LOGIN FAILED ❌")
         driver.save_screenshot("login_failed.png")
@@ -58,18 +72,22 @@ try:
     driver.get("https://cildist.castroldms.com/Reports/InvoiceDataToExcel")
     time.sleep(8)
 
-    print("Current URL after opening report:", driver.current_url)
+    print("Current URL:", driver.current_url)
     print("Page title:", driver.title)
 
     # ===== CLICK LOAD DATA =====
-    print("Searching for Load Data...")
+    print("Searching for Load Data button...")
 
-    load_elements = driver.find_elements(By.XPATH, "//*[contains(text(),'Load')] | //input[contains(@value,'Load')]")
+    load_elements = driver.find_elements(
+        By.XPATH,
+        "//*[contains(text(),'Load')] | //input[contains(@value,'Load')]"
+    )
+
     print("Load elements found:", len(load_elements))
 
     if load_elements:
         load_elements[0].click()
-        print("Clicked Load Data")
+        print("Clicked Load Data ✅")
     else:
         driver.save_screenshot("load_not_found.png")
         raise Exception("Load Data button not found")
@@ -79,12 +97,16 @@ try:
     # ===== CLICK EXCEL =====
     print("Searching for Excel button...")
 
-    excel_elements = driver.find_elements(By.XPATH, "//*[contains(text(),'Excel')] | //input[contains(@value,'Excel')]")
+    excel_elements = driver.find_elements(
+        By.XPATH,
+        "//*[contains(text(),'Excel')] | //input[contains(@value,'Excel')]"
+    )
+
     print("Excel elements found:", len(excel_elements))
 
     if excel_elements:
         excel_elements[0].click()
-        print("Clicked Excel")
+        print("Clicked Excel ✅")
     else:
         driver.save_screenshot("excel_not_found.png")
         raise Exception("Excel button not found")

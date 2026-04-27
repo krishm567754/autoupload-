@@ -1,13 +1,16 @@
 name: Castrol Auto Sync
 
 on:
-  workflow_dispatch: # Allows you to still click the "Run workflow" button manually
+  workflow_dispatch: 
   schedule:
-    # 1. Runs everyday at 7:30 PM IST (14:00 UTC)
-    - cron: '0 14 * * *'
+    # 1. Daily at 8:00 PM IST (14:30 UTC)
+    - cron: '30 14 * * *'
     
-    # 2. Runs every Saturday every hour from 5:00 PM to 10:00 PM IST (11:30 to 16:30 UTC)
+    # 2. Every Saturday, hourly from 5:00 PM to 10:00 PM IST (11:30 to 16:30 UTC)
     - cron: '30 11-16 * * 6'
+
+    # 3. Month End Candidates, hourly from 5:00 PM to 10:00 PM IST (11:30 to 16:30 UTC)
+    - cron: '30 11-16 28-31 * *'
 
 jobs:
   run-automation:
@@ -16,17 +19,30 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Smart Date Checker (Last Day of Month Fix)
+        # If it is NOT the last day, NOT Saturday, and NOT 14:30 (8 PM daily), it skips the run.
+        run: |
+          if [ "$(date -d tomorrow +%d)" != "01" ] && [ "$(date +%u)" != "6" ] && [ "$(date +%H)" != "14" ]; then
+            echo "SKIP_RUN=true" >> $GITHUB_ENV
+            echo "Today is not the last day of the month. Skipping this run."
+          else
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+          fi
+
       - name: Set up Python
+        if: env.SKIP_RUN == 'false'
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
       - name: Install Dependencies
+        if: env.SKIP_RUN == 'false'
         run: |
           python -m pip install --upgrade pip
           pip install selenium webdriver-manager pandas openpyxl
 
       - name: Run Automation Script
+        if: env.SKIP_RUN == 'false'
         env:
           SITE_USERNAME: ${{ secrets.SITE_USERNAME }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}

@@ -70,10 +70,9 @@ def upload_to_ftp(local_file_path, ftp_host, ftp_user, ftp_pass, remote_folder, 
         raise e
 
 def castrol_automation():
-    download_dir = os.path.join(os.getcwd(), "downloads")
+    download_dir = os.path.abspath(os.path.join(os.getcwd(), "downloads"))
     if not os.path.exists(download_dir): os.makedirs(download_dir)
 
-    # Clean old temp files before starting
     for f in os.listdir(download_dir):
         os.remove(os.path.join(download_dir, f))
 
@@ -87,7 +86,12 @@ def castrol_automation():
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     chrome_options.add_argument(f"user-agent={user_agent}") 
     
-    prefs = {"download.default_directory": download_dir, "download.prompt_for_download": False}
+    prefs = {
+        "download.default_directory": download_dir, 
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing.enabled": True
+    }
     chrome_options.add_experimental_option("prefs", prefs)
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"]) 
     chrome_options.add_experimental_option('useAutomationExtension', False)
@@ -152,19 +156,26 @@ def castrol_automation():
 
         # --- PHASE 4: DOWNLOAD ---
         print("💾 Clicking 'Save as Excel'...")
-        excel_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Save as Excel')]")))
+        excel_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Save as Excel')]")))
+        time.sleep(2) 
         driver.execute_script("arguments[0].click();", excel_btn)
         
-        print("⏳ Monitoring Download Folder (Up to 90s)...")
+        print("⏳ Monitoring Download Folder (Up to 150s)...")
         download_success = False
-        for i in range(9):
+        for i in range(15):
             time.sleep(10)
             current_files = os.listdir(download_dir)
-            if any(f.endswith('.xlsx') for f in current_files):
+            print(f"📁 Checking files ({i+1}/15): {current_files}")
+            
+            xlsx_files = [f for f in current_files if f.endswith('.xlsx')]
+            temp_files = [f for f in current_files if f.endswith('.crdownload') or f.endswith('.tmp')]
+            
+            if xlsx_files and not temp_files:
                 download_success = True
                 break
+                
         if not download_success:
-            raise Exception("❌ Download failed: No XLSX file arrived.")
+            raise Exception("❌ Download failed: No XLSX file arrived after 150 seconds.")
 
         # --- PHASE 5: FILE PROCESS & FILTERING ---
         xlsx_files = [f for f in os.listdir(download_dir) if f.endswith('.xlsx')]
@@ -232,7 +243,6 @@ def castrol_automation():
         time.sleep(8)
         try:
             print("🔄 Looking for the green floating refresh button...")
-            # JS clicker that perfectly targets the floating button from your screenshot
             driver.execute_script("""
                 let btns = Array.from(document.querySelectorAll('button, a, div'));
                 let target = btns.reverse().find(b => 

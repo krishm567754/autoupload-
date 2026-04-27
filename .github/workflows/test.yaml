@@ -19,15 +19,33 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Smart Date Checker (Last Day of Month Fix)
-        # If it is NOT the last day, NOT Saturday, and NOT 14:30 (8 PM daily), it skips the run.
+      - name: Smart Date Checker (Manual Bypass Fix)
         run: |
-          if [ "$(date -d tomorrow +%d)" != "01" ] && [ "$(date +%u)" != "6" ] && [ "$(date +%H)" != "14" ]; then
-            echo "SKIP_RUN=true" >> $GITHUB_ENV
-            echo "Today is not the last day of the month. Skipping this run."
-          else
+          echo "Triggered by: ${{ github.event_name }}"
+          
+          # If you clicked "Run workflow" manually, ALWAYS run it.
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "SKIP_RUN=false" >> $GITHUB_ENV
+            echo "Manual run detected. Bypassing schedule checks!"
+            exit 0
           fi
+          
+          TOMORROW=$(date -d tomorrow +%d)
+          CURRENT_HOUR=$(date +%H)
+          CURRENT_DAY=$(date +%u)
+          
+          # If it is NOT the daily 8 PM run (14:30 UTC)...
+          if [ "$CURRENT_HOUR" != "14" ]; then
+            # And it's NOT Saturday (6) AND NOT the last day of the month...
+            if [ "$CURRENT_DAY" != "6" ] && [ "$TOMORROW" != "01" ]; then
+              echo "SKIP_RUN=true" >> $GITHUB_ENV
+              echo "Skipping: Not Saturday, not the last day of the month, and not 8 PM."
+              exit 0
+            fi
+          fi
+          
+          echo "SKIP_RUN=false" >> $GITHUB_ENV
+          echo "Schedule rules matched! Running the script..."
 
       - name: Set up Python
         if: env.SKIP_RUN == 'false'

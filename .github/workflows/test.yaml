@@ -19,33 +19,50 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Smart Date Checker (Manual Bypass Fix)
+      - name: Smart IST Date Checker
         run: |
-          echo "Triggered by: ${{ github.event_name }}"
+          # Force the server to calculate dates using Indian Standard Time
+          export TZ="Asia/Kolkata"
           
-          # If you clicked "Run workflow" manually, ALWAYS run it.
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "SKIP_RUN=false" >> $GITHUB_ENV
-            echo "Manual run detected. Bypassing schedule checks!"
-            exit 0
-          fi
-          
-          TOMORROW=$(date -d tomorrow +%d)
           CURRENT_HOUR=$(date +%H)
           CURRENT_DAY=$(date +%u)
+          TOMORROW=$(date -d tomorrow +%d)
           
-          # If it is NOT the daily 8 PM run (14:30 UTC)...
-          if [ "$CURRENT_HOUR" != "14" ]; then
-            # And it's NOT Saturday (6) AND NOT the last day of the month...
-            if [ "$CURRENT_DAY" != "6" ] && [ "$TOMORROW" != "01" ]; then
-              echo "SKIP_RUN=true" >> $GITHUB_ENV
-              echo "Skipping: Not Saturday, not the last day of the month, and not 8 PM."
-              exit 0
-            fi
+          echo "Evaluating run for IST Time..."
+          echo "Current IST Hour: $CURRENT_HOUR"
+          echo "Current Day of Week (1=Mon, 7=Sun): $CURRENT_DAY"
+          echo "Tomorrow's Date: $TOMORROW"
+          
+          SHOULD_RUN=false
+          
+          # 1. Manual Click Override
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Manual run detected."
+            SHOULD_RUN=true
+            
+          # 2. Daily 8:00 PM IST Run (Hour 20)
+          elif [ "$CURRENT_HOUR" == "20" ]; then
+            echo "Matched Daily 8 PM schedule."
+            SHOULD_RUN=true
+            
+          # 3. Saturday 5:00 PM to 10:00 PM IST (Hours 17 to 22)
+          elif [ "$CURRENT_DAY" == "6" ] && [ "$CURRENT_HOUR" -ge 17 ] && [ "$CURRENT_HOUR" -le 22 ]; then
+            echo "Matched Saturday 5 PM to 10 PM schedule."
+            SHOULD_RUN=true
+            
+          # 4. Last Day of the Month 5:00 PM to 10:00 PM IST (Hours 17 to 22)
+          elif [ "$TOMORROW" == "01" ] && [ "$CURRENT_HOUR" -ge 17 ] && [ "$CURRENT_HOUR" -le 22 ]; then
+            echo "Matched Month-End 5 PM to 10 PM schedule."
+            SHOULD_RUN=true
           fi
           
-          echo "SKIP_RUN=false" >> $GITHUB_ENV
-          echo "Schedule rules matched! Running the script..."
+          if [ "$SHOULD_RUN" == "true" ]; then
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+            echo "✅ Schedule matches! Running the Python script..."
+          else
+            echo "SKIP_RUN=true" >> $GITHUB_ENV
+            echo "⏭️ Not the scheduled time in India. Skipping run."
+          fi
 
       - name: Set up Python
         if: env.SKIP_RUN == 'false'

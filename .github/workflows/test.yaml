@@ -4,13 +4,15 @@ on:
   workflow_dispatch:
 
   schedule:
-    # ✅ Daily 8:30 PM IST
-    - cron: '0 15 * * *'
+    # 🧪 TEST: 8:36 PM IST (15:06 UTC)
+    - cron: '6 15 * * *'
 
-    # ✅ Saturday 5–10 PM IST (hourly)
+    # (Keep your real schedules below if you want, or comment for testing)
+
+    # Saturday 5–10 PM IST
     - cron: '30 11-16 * * 6'
 
-    # ✅ Month-end (28–31) 5–10 PM IST (hourly)
+    # Month-end 5–10 PM IST
     - cron: '30 11-16 28-31 * *'
 
 jobs:
@@ -21,7 +23,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 🔧 Install Chrome (still useful)
       - name: Install Chromium
         run: |
           sudo apt update
@@ -43,7 +44,6 @@ jobs:
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
         run: python script.py
 
-      # 🔍 Debug files if something fails
       - name: Upload Debug Files
         if: failure()
         uses: actions/upload-artifact@v4

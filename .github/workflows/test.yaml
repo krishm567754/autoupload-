@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
   schedule:
-    # ✅ Daily 9:00 PM IST
-    - cron: '30 15 * * *'
+    # ✅ Daily 8:00 PM IST
+    - cron: '30 14 * * *'
 
     # ✅ Saturday 5–10 PM IST (hourly)
     - cron: '30 11-16 * * 6'

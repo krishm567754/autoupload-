@@ -21,11 +21,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 🔥 Required for Selenium
+      # 🔧 Install Chrome (still useful)
       - name: Install Chromium
         run: |
           sudo apt update
-          sudo apt install -y chromium-browser chromium-chromedriver
+          sudo apt install -y chromium-browser
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,7 +35,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install selenium pandas openpyxl
+          pip install selenium webdriver-manager pandas openpyxl
 
       - name: Run Automation Script
         env:
@@ -43,7 +43,7 @@ jobs:
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
         run: python script.py
 
-      # 🔍 Debug if failure
+      # 🔍 Debug files if something fails
       - name: Upload Debug Files
         if: failure()
         uses: actions/upload-artifact@v4

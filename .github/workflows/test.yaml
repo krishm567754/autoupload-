@@ -1,17 +1,12 @@
 name: Castrol Auto Sync
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: 
 
   schedule:
-    # ✅ Daily 8:00 PM IST
-    - cron: '30 14 * * *'
-
-    # ✅ Saturday 5–10 PM IST (hourly)
-    - cron: '30 11-16 * * 6'
-
-    # ✅ Month-end (28–31) 5–10 PM IST (hourly)
-    - cron: '30 11-16 28-31 * *'
+    # 🕒 Wakes up every day from 5:05 PM to 10:05 PM IST (11:35 to 16:35 UTC)
+    # Our Smart Checker below will automatically cancel the runs we don't want!
+    - cron: '35 11-16 * * *'
 
 jobs:
   run-automation:
@@ -21,23 +16,71 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Install browser for Selenium
+      # ✅ SMART DATE CHECKER (100% Reliable IST Logic)
+      - name: Smart Date Checker
+        run: |
+          export TZ="Asia/Kolkata"
+          CURRENT_HOUR=$(date +%H)
+          CURRENT_DAY_OF_WEEK=$(date +%u)
+          TOMORROW=$(date -d tomorrow +%d)
+
+          echo "Current IST Hour: $CURRENT_HOUR"
+          echo "Tomorrow's Date: $TOMORROW"
+          echo "Day of Week (6 = Saturday): $CURRENT_DAY_OF_WEEK"
+
+          # 1. If triggered manually by you, ALWAYS run
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Manual run detected. Proceeding!"
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # 2. Daily 8 PM IST Run (Allowing hour 20 or 21 in case GitHub is running slow)
+          if [ "$CURRENT_HOUR" == "20" ] || [ "$CURRENT_HOUR" == "21" ]; then
+            echo "Matched Daily 8 PM schedule. Proceeding!"
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # 3. Saturday Hourly Run (5 PM to 10 PM)
+          if [ "$CURRENT_DAY_OF_WEEK" == "6" ]; then
+            echo "Today is Saturday. Hourly run proceeding!"
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # 4. Last Day of the Month Hourly Run (If tomorrow is the 1st)
+          if [ "$TOMORROW" == "01" ]; then
+            echo "Today is the last day of the month. Hourly run proceeding!"
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          # 5. If none of the above match, INSTANTLY SKIP.
+          echo "SKIP_RUN=true" >> $GITHUB_ENV
+          echo "⏭️ Skipping: Not Saturday, not the last day of the month, and not 8 PM."
+
+      # Install browser for Selenium (Only if SKIP_RUN is false)
       - name: Install Chromium
+        if: env.SKIP_RUN == 'false'
         run: |
           sudo apt update
           sudo apt install -y chromium-browser
 
       - name: Set up Python
+        if: env.SKIP_RUN == 'false'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install Dependencies
+        if: env.SKIP_RUN == 'false'
         run: |
           python -m pip install --upgrade pip
           pip install selenium webdriver-manager pandas openpyxl
 
       - name: Run Automation Script
+        if: env.SKIP_RUN == 'false'
         env:
           SITE_USERNAME: ${{ secrets.SITE_USERNAME }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}

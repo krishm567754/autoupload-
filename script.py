@@ -242,15 +242,18 @@ def castrol_automation():
         driver.get(f"https://krishmodiexp.xo.je/?i=1&t={int(time.time())}")
         time.sleep(8)
         try:
-            print("🔄 Looking for the green floating refresh button...")
+            print("🔄 Looking for the green refresh button...")
+            
+            # 🔥 CRITICAL FIX: Directly targeting the CSS class and JS function from the DevTools screenshot
             driver.execute_script("""
-                let btns = Array.from(document.querySelectorAll('button, a, div'));
-                let target = btns.reverse().find(b => 
-                    b.className.includes('fixed') || 
-                    b.innerHTML.includes('<svg') ||
-                    b.id === 'refresh-button'
-                );
-                if (target) { target.click(); }
+                let btn = document.querySelector('.refresh-btn') || document.querySelector('[onclick*="forceSync"]');
+                if (btn) {
+                    btn.click();
+                    console.log("Clicked .refresh-btn directly");
+                } else if (typeof forceSync === 'function') {
+                    forceSync();
+                    console.log("Fired forceSync() function directly");
+                }
             """)
             
             sync_active = False

@@ -59,12 +59,12 @@ jobs:
           echo "SKIP_RUN=true" >> $GITHUB_ENV
           echo "⏭️ Skipping: Not Saturday, not the last day of the month, and not 8 PM."
 
-      # Install browser for Selenium (Only if SKIP_RUN is false)
-      - name: Install Chromium
+      # 🚀 THE FIX: Install official Google Chrome directly, completely avoiding the broken Snap store!
+      - name: Install Google Chrome
         if: env.SKIP_RUN == 'false'
         run: |
-          sudo apt update
-          sudo apt install -y chromium-browser
+          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt install ./google-chrome-stable_current_amd64.deb -y
 
       - name: Set up Python
         if: env.SKIP_RUN == 'false'
